@@ -231,7 +231,7 @@ pub const CPU = struct {
 test "Test fetch instruction" {
     const emu = try game_emu.Emu.init();
     defer emu.destroy();
-    try emu.prep_emu("./roms/tetris.gb");
+    try emu.prep_emu("./roms/dmg-acid2.gb");
     var cpu = emu.cpu.?.*;
     try cpu.fetch_instruction();
     try std.testing.expect(emu.cart.?.*.data[0x0100] == cpu.current_opcode);
@@ -240,7 +240,7 @@ test "Test fetch instruction" {
 test "Test cpu" {
     const emu = try game_emu.Emu.init();
     defer emu.destroy();
-    try emu.prep_emu("./roms/tetris.gb");
+    try emu.prep_emu("./roms/dmg-acid2.gb");
     const cpu = emu.cpu.?.*;
 
     cpu.flag_register.z = 1;

@@ -10,7 +10,7 @@ pub fn GetBootRoom(boot_rom_name: []const u8) ![]const u8 {
     } else if (std.mem.eql(u8, "dmg", boot_rom_name)) {
         return dmg_boot_rom;
     }
-    return AssetNotFoundError.BootRomNotFoundError;
+    return &.{};
 }
 
 // Tests
