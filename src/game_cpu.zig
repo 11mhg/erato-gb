@@ -1,713 +1,257 @@
 const std = @import("std");
 const game_allocator = @import("game_allocator.zig");
-const game_memory = @import("game_memory.zig");
+const game_instructions = @import("game_instructions.zig");
+const game_emu = @import("game_emu.zig");
+const game_errors = @import("game_errors.zig");
+const game_proc = @import("game_proc.zig");
 
-pub const FlagRegister = packed struct(u8) {
+//16-bit	Hi	Lo	Name/Function
+//AF	A	-	Accumulator & Flags
+//BC	B	C	BC
+//DE	D	E	DE
+//HL	H	L	HL
+//SP	-	-	Stack Pointer
+//PC	-	-	Program Counter/Pointer
+//
+//Bit	Name	Explanation
+//7	z	Zero flag
+//6	n	Subtraction flag (BCD)
+//5	h	Half Carry flag (BCD)
+//4	c	Carry flag
+
+const FlagsRegister = packed struct(u8) {
     _: u4,
-    carry: bool,
-    half_carry: bool,
-    subtract: bool,
-    zero: bool,
+    c: u1, // carry
+    h: u1, // half-carry
+    n: u1, // subtraction flag
+    z: u1, // zero flag
 };
 
-pub const Registers = packed struct {
-    a: u8,
-    b: u8,
-    c: u8,
-    d: u8,
-    e: u8,
-    f: u8,
-    h: u8,
-    l: u8,
-    pub fn get_af(self: *Registers) u16 {
-        return (@as(u16, self.a) << 8) | (@as(u16, self.f));
-    }
-    pub fn get_bc(self: *Registers) u16 {
-        return (@as(u16, self.b) << 8) | (@as(u16, self.c));
-    }
-    pub fn get_de(self: *Registers) u16 {
-        return (@as(u16, self.d) << 8) | (@as(u16, self.e));
-    }
-    pub fn get_hl(self: *Registers) u16 {
-        return (@as(u16, self.h) << 8) | (@as(u16, self.l));
-    }
-    pub fn set_af(self: *Registers, value: u16) void {
-        self.a = @truncate((value & 0xFF00) >> 8);
-        self.f = @truncate((value & 0x00FF));
-    }
-    pub fn set_bc(self: *Registers, value: u16) void {
-        self.b = @truncate((value & 0xFF00) >> 8);
-        self.c = @truncate((value & 0x00FF));
-    }
-    pub fn set_de(self: *Registers, value: u16) void {
-        self.d = @truncate((value & 0xFF00) >> 8);
-        self.e = @truncate((value & 0x00FF));
-    }
-    pub fn set_hl(self: *Registers, value: u16) void {
-        self.h = @truncate((value & 0xFF00) >> 8);
-        self.l = @truncate((value & 0x00FF));
-    }
+const Registers = packed struct { f: u8, a: u8, c: u8, b: u8, e: u8, d: u8, l: u8, h: u8, sp: u16, pc: u16 };
+const RegistersU16 = packed struct {
+    AF: u16,
+    BC: u16,
+    DE: u16,
+    HL: u16,
 };
 
-pub const RegisterNames = enum { NONE, A, B, C, D, E, H, L, AF, BC, DE, HL };
+pub const CPU = struct {
+    allocator: std.mem.Allocator,
+    emu: *game_emu.Emu,
+    registers: *Registers,
+    registers_u16: *RegistersU16,
+    flag_register: *FlagsRegister,
 
-pub const Instruction = enum {
-    NOP,
-    ADD,
-    ADDHL,
-    ADC,
-    SUB,
-    SBC,
-    AND,
-    OR,
-    XOR,
-    CP,
-    INC,
-    DEC,
-    CCF,
-    SCF,
-    RRA,
-    RLA,
-    RRCA,
-    RLCA,
-    CPL,
-    BIT,
-    RES,
-};
+    current_opcode: u8,
+    current_instruction: ?game_instructions.Instruction,
+    opcode_instruction_map: std.AutoHashMap(u8, game_instructions.Instruction),
+    fetched_data: u16,
 
-const CPUErrors = error{
-    OpNotImplemented,
-    OpImplementedTargetNotImplemented,
-};
+    interrupt_master_enable: bool,
 
-const CPU = struct {
-    registers: Registers,
-    sp: u16,
-    pc: u16,
-    memoryBus: game_memory.MemoryBus,
+    halted: bool,
+    stepping: bool,
 
-    fn fetch_register_u16(self: *CPU, targetRegister: RegisterNames) !u16 {
-        switch (targetRegister) {
-            RegisterNames.A => {
-                return @as(u16, self.registers.a);
+    pub fn init(emu: *game_emu.Emu) !*CPU {
+        const allocator = game_allocator.GetAllocator();
+        const cpu = try allocator.create(CPU);
+
+        cpu.emu = emu;
+        cpu.allocator = allocator;
+
+        cpu.fetched_data = 0;
+        cpu.interrupt_master_enable = false;
+
+        cpu.halted = false;
+        cpu.stepping = false;
+
+        cpu.registers = try allocator.create(Registers);
+        cpu.registers.a = 0;
+        cpu.registers.f = 0;
+        cpu.registers.b = 0;
+        cpu.registers.c = 0;
+        cpu.registers.d = 0;
+        cpu.registers.e = 0;
+        cpu.registers.h = 0;
+        cpu.registers.l = 0;
+        cpu.registers.sp = 0;
+        cpu.registers.pc = 0;
+
+        cpu.registers_u16 = @ptrCast(cpu.registers);
+        cpu.flag_register = @ptrCast(&cpu.registers.f);
+
+        cpu.current_opcode = 0;
+        cpu.current_instruction = null;
+        cpu.opcode_instruction_map = try game_instructions.GetInstructionMap();
+
+        return cpu;
+    }
+
+    pub fn step(self: *CPU) !bool {
+        const pc = self.registers.pc;
+        const previous_cycle_num = self.emu.cycle_num;
+        var new_pc: u16 = 0;
+        if (!self.halted) {
+            try self.fetch_instruction();
+            try self.fetch_data();
+            //std.log.info("OP: 0x{X:0>2} SP: 0x{X:0>4} PC: 0x{X:0>4} fetched_data: 0x{X:0>4}", .{ self.current_opcode, self.registers.sp, pc, self.fetched_data });
+
+            std.debug.print("{X:0>4}:  {s: >4} ({X:0>2} {X:0>2} {X:0>2}) A: {X:0>2} B: {X:0>2} C: {X:0>2} fetched_data: {X:0>4}\n", .{
+                pc,
+                @tagName(self.current_instruction.?.in_type),
+                try self.emu.memory_bus.?.*.read(pc),
+                try self.emu.memory_bus.?.*.read(pc + 1),
+                try self.emu.memory_bus.?.*.read(pc + 2),
+                self.registers.a,
+                self.registers.b,
+                self.registers.c,
+                self.fetched_data,
+            });
+            new_pc = self.registers.pc;
+            try self.execute();
+        }
+        const num_cycles = 4 * (self.emu.cycle_num - previous_cycle_num);
+        const num_bytes = new_pc - pc;
+        std.debug.print("\t Num Bytes: {d} Num Cycles: {d}\n\n", .{ num_bytes, num_cycles });
+
+        return true;
+    }
+
+    fn execute(self: *CPU) !void {
+        try game_proc.proc(self, self.current_instruction.?);
+        return;
+    }
+
+    fn fetch_instruction(self: *CPU) !void {
+        self.current_opcode = try self.emu.memory_bus.?.*.read(self.registers.pc);
+        self.registers.pc += 1;
+
+        // fetch the instruction by the op code
+        const current_instruction = self.opcode_instruction_map.get(self.current_opcode);
+        if (current_instruction) |found| {
+            self.current_instruction = found;
+        } else {
+            std.log.debug("Op code not implemented in instruction map: 0x{X:0>2}", .{self.current_opcode});
+            return game_errors.EmuErrors.OpNotImplementedError;
+        }
+    }
+
+    fn read_reg(self: *CPU, reg: game_instructions.RegisterType) !u16 {
+        return switch (reg) {
+            game_instructions.RegisterType.NONE => return game_errors.EmuErrors.NotImplementedError,
+            game_instructions.RegisterType.A => self.registers.a,
+            game_instructions.RegisterType.B => self.registers.b,
+            game_instructions.RegisterType.C => self.registers.c,
+            game_instructions.RegisterType.D => self.registers.d,
+            game_instructions.RegisterType.E => self.registers.e,
+            game_instructions.RegisterType.F => self.registers.f,
+            game_instructions.RegisterType.H => self.registers.h,
+            game_instructions.RegisterType.L => self.registers.l,
+            game_instructions.RegisterType.AF => self.registers_u16.AF,
+            game_instructions.RegisterType.BC => self.registers_u16.BC,
+            game_instructions.RegisterType.DE => self.registers_u16.DE,
+            game_instructions.RegisterType.HL => self.registers_u16.HL,
+            game_instructions.RegisterType.PC => self.registers.pc,
+            game_instructions.RegisterType.SP => self.registers.sp,
+        };
+    }
+
+    pub fn write_reg(self: *CPU, reg: game_instructions.RegisterType, value: u16) !void {
+        switch (reg) {
+            game_instructions.RegisterType.NONE => return game_errors.EmuErrors.NotImplementedError,
+            game_instructions.RegisterType.A => self.registers.a = @truncate(value),
+            game_instructions.RegisterType.B => self.registers.b = @truncate(value),
+            game_instructions.RegisterType.C => self.registers.c = @truncate(value),
+            game_instructions.RegisterType.D => self.registers.d = @truncate(value),
+            game_instructions.RegisterType.E => self.registers.e = @truncate(value),
+            game_instructions.RegisterType.F => self.registers.f = @truncate(value),
+            game_instructions.RegisterType.H => self.registers.h = @truncate(value),
+            game_instructions.RegisterType.L => self.registers.l = @truncate(value),
+            game_instructions.RegisterType.AF => self.registers_u16.AF = value,
+            game_instructions.RegisterType.BC => self.registers_u16.BC = value,
+            game_instructions.RegisterType.DE => self.registers_u16.DE = value,
+            game_instructions.RegisterType.HL => self.registers_u16.HL = value,
+            game_instructions.RegisterType.PC => self.registers.pc = value,
+            game_instructions.RegisterType.SP => self.registers.sp = value,
+        }
+        return;
+    }
+
+    fn fetch_data(self: *CPU) !void {
+        switch (self.current_instruction.?.mode) {
+            game_instructions.AddressMode.IMP => {
+                return;
             },
-            RegisterNames.B => {
-                return @as(u16, self.registers.b);
+            game_instructions.AddressMode.R => {
+                self.fetched_data = try self.read_reg(self.current_instruction.?.reg_1);
+                return;
             },
-            RegisterNames.C => {
-                return @as(u16, self.registers.c);
+            game_instructions.AddressMode.R_N8 => {
+                self.fetched_data = try self.emu.memory_bus.?.*.read(self.registers.pc);
+                self.emu.cycle(1);
+                self.registers.pc += 1;
+                return;
             },
-            RegisterNames.D => {
-                return @as(u16, self.registers.d);
+            game_instructions.AddressMode.R_N16 => {
+                self.fetched_data = try self.emu.memory_bus.?.*.read(self.registers.pc);
+                self.emu.cycle(1);
+                self.registers.pc += 1;
+                return;
             },
-            RegisterNames.E => {
-                return @as(u16, self.registers.e);
-            },
-            RegisterNames.H => {
-                return @as(u16, self.registers.h);
-            },
-            RegisterNames.L => {
-                return @as(u16, self.registers.l);
-            },
-            RegisterNames.AF => {
-                return self.registers.get_af();
-            },
-            RegisterNames.BC => {
-                return self.registers.get_bc();
-            },
-            RegisterNames.DE => {
-                return self.registers.get_de();
-            },
-            RegisterNames.HL => {
-                return self.registers.get_hl();
+            game_instructions.AddressMode.N16, game_instructions.AddressMode.N16_R => {
+                const lo: u16 = try self.emu.memory_bus.?.*.read(self.registers.pc);
+                self.emu.cycle(1);
+                const hi: u16 = try self.emu.memory_bus.?.*.read(self.registers.pc + 1);
+                self.emu.cycle(1);
+                self.fetched_data = lo | (hi << 8);
+                self.registers.pc += 2;
+                return;
             },
             else => {
-                return CPUErrors.OpImplementedTargetNotImplemented;
-            },
-        }
-    }
-    fn fetch_register_u8(self: *CPU, targetRegister: RegisterNames) !u8 {
-        switch (targetRegister) {
-            RegisterNames.A => {
-                return self.registers.a;
-            },
-            RegisterNames.B => {
-                return self.registers.b;
-            },
-            RegisterNames.C => {
-                return self.registers.c;
-            },
-            RegisterNames.D => {
-                return self.registers.d;
-            },
-            RegisterNames.E => {
-                return self.registers.e;
-            },
-            RegisterNames.H => {
-                return self.registers.h;
-            },
-            RegisterNames.L => {
-                return self.registers.l;
-            },
-            RegisterNames.AF => {
-                return @truncate(self.registers.get_af());
-            },
-            RegisterNames.BC => {
-                return @truncate(self.registers.get_bc());
-            },
-            RegisterNames.DE => {
-                return @truncate(self.registers.get_de());
-            },
-            RegisterNames.HL => {
-                return @truncate(self.registers.get_hl());
-            },
-            else => {
-                return CPUErrors.OpImplementedTargetNotImplemented;
-            },
-        }
-    }
-    fn set_register_u8(self: *CPU, targetRegister: RegisterNames, value: u8) !void {
-        switch (targetRegister) {
-            RegisterNames.A => {
-                self.registers.a = value;
-            },
-            RegisterNames.B => {
-                self.registers.b = value;
-            },
-            RegisterNames.C => {
-                self.registers.c = value;
-            },
-            RegisterNames.D => {
-                self.registers.d = value;
-            },
-            RegisterNames.E => {
-                self.registers.e = value;
-            },
-            RegisterNames.H => {
-                self.registers.h = value;
-            },
-            RegisterNames.L => {
-                self.registers.l = value;
-            },
-            RegisterNames.AF => {
-                self.registers.set_af(value);
-            },
-            RegisterNames.BC => {
-                self.registers.set_bc(value);
-            },
-            RegisterNames.DE => {
-                self.registers.set_de(value);
-            },
-            RegisterNames.HL => {
-                self.registers.set_hl(value);
-            },
-            else => {
-                return CPUErrors.OpImplementedTargetNotImplemented;
+                std.log.debug("Fetch not implemented for address mode: {s}", .{@tagName(self.current_instruction.?.mode)});
+                return game_errors.EmuErrors.OpNotImplementedError;
             },
         }
     }
 
-    fn execute(self: *CPU, instruction: Instruction, targetRegister: RegisterNames, _u3_val: u3) !void {
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        switch (instruction) {
-            Instruction.NOP => {},
-            Instruction.ADD => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._add(value);
-                self.registers.a = new_value;
-            },
-            Instruction.ADDHL => {
-                const value = try self.fetch_register_u16(targetRegister);
-                const new_value = self._add_hl(value);
-                self.registers.set_hl(new_value);
-            },
-            Instruction.ADC => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._add_carry(value);
-                self.registers.a = new_value;
-            },
-            Instruction.AND => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._and(value);
-                self.registers.a = new_value;
-            },
-            Instruction.SUB => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._sub(value);
-                self.registers.a = new_value;
-            },
-            Instruction.SBC => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._sub_carry(value);
-                self.registers.a = new_value;
-            },
-            Instruction.OR => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._or(value);
-                self.registers.a = new_value;
-            },
-            Instruction.XOR => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._xor(value);
-                self.registers.a = new_value;
-            },
-            Instruction.CP => {
-                const value = try self.fetch_register_u8(targetRegister);
-                _ = self._sub(value);
-            },
-            Instruction.INC => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._inc(value);
-                try self.set_register_u8(targetRegister, new_value);
-            },
-            Instruction.DEC => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._dec(value);
-                try self.set_register_u8(targetRegister, new_value);
-            },
-            Instruction.CCF => {
-                f.subtract = false;
-                f.half_carry = false;
-                f.carry = !f.carry;
-            },
-            Instruction.SCF => {
-                f.subtract = false;
-                f.half_carry = false;
-                f.carry = true;
-            },
-            Instruction.RRA => {
-                self._rra();
-            },
-            Instruction.RLA => {
-                self._rla();
-            },
-            Instruction.RRCA => {
-                self._rrca();
-            },
-            Instruction.RLCA => {
-                self._rlca();
-            },
-            Instruction.CPL => {
-                self._cpl();
-            },
-            Instruction.BIT => {
-                const value = try self.fetch_register_u8(targetRegister);
-                self._bit(value, _u3_val);
-            },
-            Instruction.RES => {
-                const value = try self.fetch_register_u8(targetRegister);
-                const new_value = self._res(value, _u3_val);
-                try self.set_register_u8(targetRegister, new_value);
-            },
-        }
-    }
-
-    fn _res(_: *CPU, value: u8, _u3_val: u3) u8 {
-        const mask = ~(@as(u8, 1) << _u3_val);
-        const new_value = value & mask;
-        return new_value;
-    }
-
-    fn _bit(self: *CPU, value: u8, _u3_val: u3) void {
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        const mask = @as(u8, 1) << _u3_val;
-
-        f.zero = (value & mask) == 0;
-        f.subtract = false;
-        f.half_carry = true;
-    }
-
-    fn _cpl(self: *CPU) void {
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-
-        self.registers.a = ~self.registers.a;
-        f.subtract = true;
-        f.half_carry = true;
-    }
-
-    fn _rlca(self: *CPU) void {
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        const most_bit = self.registers.a >> 7;
-
-        self.registers.a = self.registers.a << 1;
-        self.registers.a = self.registers.a | most_bit;
-
-        f.zero = false;
-        f.subtract = false;
-        f.half_carry = false;
-        f.carry = most_bit != 0;
-    }
-
-    fn _rla(self: *CPU) void {
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        const carry: u8 = @intFromBool(f.carry);
-        const most_bit = self.registers.a >> 7;
-
-        self.registers.a = self.registers.a << 1;
-        self.registers.a = self.registers.a | carry;
-
-        f.zero = self.registers.a == 0;
-        f.subtract = false;
-        f.half_carry = false;
-        f.carry = most_bit != 0;
-    }
-
-    fn _rrca(self: *CPU) void {
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        const least_bit = self.registers.a & 1;
-        self.registers.a = self.registers.a >> 1;
-
-        f.zero = false;
-        f.subtract = false;
-        f.half_carry = false;
-        f.carry = least_bit != 0;
-    }
-
-    fn _rra(self: *CPU) void {
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        const carry: u8 = @intFromBool(f.carry);
-        const least_bit = self.registers.a & 1;
-
-        self.registers.a = self.registers.a >> 1;
-        self.registers.a = self.registers.a | (carry << 7);
-
-        f.zero = self.registers.a == 0;
-        f.subtract = false;
-        f.half_carry = false;
-        f.carry = least_bit != 0;
-    }
-
-    fn _dec(self: *CPU, value: u8) u8 {
-        const sub_result = @subWithOverflow(value, 1);
-        const new_value = sub_result[0];
-
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        f.zero = new_value == 0;
-        f.subtract = false;
-        f.half_carry = (value & 0x0F) < (1 & 0x0F);
-        f.carry = new_value > value;
-        return new_value;
-    }
-
-    fn _inc(self: *CPU, value: u8) u8 {
-        const add_result = @addWithOverflow(value, 1);
-        const new_value = add_result[0];
-
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        f.zero = new_value == 0;
-        f.subtract = false;
-        f.half_carry = (1 + (value & 0x07)) > 0x07;
-        f.carry = value > new_value;
-        return new_value;
-    }
-
-    fn _add(self: *CPU, value: u8) u8 {
-        const add_result = @addWithOverflow(self.registers.a, value);
-        const new_value = add_result[0];
-        const overflow_flag = add_result[1];
-
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        f.zero = new_value == 0;
-        f.subtract = false;
-        f.carry = overflow_flag != 0;
-        f.half_carry = ((self.registers.a & 0x07) + (value & 0x07)) > 0x07;
-        return new_value;
-    }
-
-    fn _add_carry(self: *CPU, value: u8) u8 {
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        const carryValue: u8 = @intFromBool(f.carry);
-
-        var add_result = @addWithOverflow(self.registers.a, value);
-        var new_value = add_result[0];
-        var overflow_flag = add_result[1];
-
-        add_result = @addWithOverflow(new_value, carryValue);
-        new_value = add_result[0];
-        overflow_flag = overflow_flag | add_result[1];
-
-        f.zero = new_value == 0;
-        f.subtract = false;
-        f.carry = overflow_flag != 0;
-        f.half_carry = ((self.registers.a & 0x07) + (value & 0x07) + (carryValue & 0x07)) > 0x07;
-        return new_value;
-    }
-
-    fn _and(self: *CPU, value: u8) u8 {
-        const and_result = self.registers.a & value;
-
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        f.zero = and_result == 0;
-        f.subtract = false;
-        f.half_carry = true;
-        f.carry = false;
-        return and_result;
-    }
-
-    fn _sub(self: *CPU, value: u8) u8 {
-        const sub_result = @subWithOverflow(self.registers.a, value)[0];
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        f.zero = sub_result == 0;
-        f.subtract = true;
-        f.half_carry = (self.registers.a & 0x0F) < (value & 0x0F);
-        f.carry = value > self.registers.a;
-
-        return sub_result;
-    }
-
-    fn _sub_carry(self: *CPU, value: u8) u8 {
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        const carryValue: u8 = @intFromBool(f.carry);
-        const sub_result = @subWithOverflow(self.registers.a, value + carryValue)[0];
-
-        f.zero = sub_result == 0;
-        f.subtract = true;
-        f.half_carry = (self.registers.a & 0x0F) < (value & 0x0F);
-        f.carry = (value + carryValue) > self.registers.a;
-        return sub_result;
-    }
-
-    fn _or(self: *CPU, value: u8) u8 {
-        const or_result = self.registers.a | value;
-
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        f.zero = or_result == 0;
-        f.subtract = false;
-        f.half_carry = false;
-        f.carry = false;
-        return or_result;
-    }
-
-    fn _xor(self: *CPU, value: u8) u8 {
-        const xor_result = (self.registers.a & ~value) | (~self.registers.a & value);
-
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        f.zero = xor_result == 0;
-        f.subtract = false;
-        f.half_carry = false;
-        f.carry = false;
-        return xor_result;
-    }
-
-    fn _add_hl(self: *CPU, value: u16) u16 {
-        const add_result = @addWithOverflow(self.registers.get_hl(), value);
-        const new_value = add_result[0];
-        const overflow_flag = add_result[1];
-
-        var f: *FlagRegister = @ptrCast(&self.registers.f);
-        f.zero = new_value == 0;
-        f.subtract = false;
-        f.carry = overflow_flag != 0;
-        f.half_carry = ((self.registers.a & 0xFF) + (value & 0xFF)) > 0xFF;
-        return new_value;
+    pub fn destroy(self: *CPU) void {
+        self.opcode_instruction_map.deinit();
+        self.allocator.destroy(self.registers);
+        self.allocator.destroy(self);
     }
 };
 
-pub fn CreateCpu() !CPU {
-    const register: Registers = Registers{
-        .a = 0,
-        .b = 0,
-        .c = 0,
-        .d = 0,
-        .e = 0,
-        .f = 0,
-        .h = 0,
-        .l = 0,
-    };
+// TESTS
 
-    const memoryBus: game_memory.MemoryBus = try game_memory.CreateMemoryBus();
-
-    const cpu = CPU{
-        .registers = register,
-        .memoryBus = memoryBus,
-        .sp = 0,
-        .pc = 0,
-    };
-
-    return cpu;
+test "Test fetch instruction" {
+    const emu = try game_emu.Emu.init();
+    defer emu.destroy();
+    try emu.prep_emu("./roms/tetris.gb");
+    var cpu = emu.cpu.?.*;
+    try cpu.fetch_instruction();
+    try std.testing.expect(emu.cart.?.*.data[0x0100] == cpu.current_opcode);
 }
 
-// ----- TESTS -------
-test "basic register functionality" {
-    var register: Registers = Registers{
-        .a = 0,
-        .b = 0,
-        .c = 0,
-        .d = 0,
-        .e = 0,
-        .f = 0,
-        .h = 0,
-        .l = 0,
-    };
-    try std.testing.expect(register.get_af() == 0);
-    register.a = 10;
-    try std.testing.expect(register.get_af() == 2560);
+test "Test cpu" {
+    const emu = try game_emu.Emu.init();
+    defer emu.destroy();
+    try emu.prep_emu("./roms/tetris.gb");
+    const cpu = emu.cpu.?.*;
 
-    var f: FlagRegister = @bitCast(register.f);
-    try std.testing.expect(f.zero == false);
-    try std.testing.expect(f.carry == false);
-    try std.testing.expect(f.subtract == false);
-    try std.testing.expect(f.half_carry == false);
-
-    f.zero = true;
-    register.f = @bitCast(f);
-    try std.testing.expectEqual(register.f, 128);
-}
-
-test "basic cpu add functionality" {
-    var cpu = try CreateCpu();
-    var f: *FlagRegister = @ptrCast(&cpu.registers.f);
-
-    // Test ADD;
-    cpu.registers.a = 10;
-    cpu.registers.b = 5;
-    try cpu.execute(Instruction.ADD, RegisterNames.B, 0);
-    try std.testing.expectEqual(15, cpu.registers.a);
-    try std.testing.expectEqual(false, f.carry);
+    cpu.flag_register.z = 1;
+    cpu.flag_register.n = 1;
+    cpu.flag_register.h = 1;
+    cpu.flag_register.c = 1;
 
     cpu.registers.a = 0xFF;
-    cpu.registers.b = 1;
-    try cpu.execute(Instruction.ADD, RegisterNames.B, 0);
-    try std.testing.expectEqual(0, cpu.registers.a);
-    try std.testing.expectEqual(true, f.carry);
 
-    // Test ADDHL;
-    cpu.registers.set_hl(0x1234);
-    cpu.registers.set_de(0x0011);
-    try cpu.execute(Instruction.ADDHL, RegisterNames.DE, 0);
-    try std.testing.expectEqual(0x1245, cpu.registers.get_hl());
-    try std.testing.expectEqual(false, f.carry);
-
-    // Test addition with carry (simulate overflow)
-    cpu.registers.set_hl(0xFFFF);
-    cpu.registers.set_de(0x0001);
-    try cpu.execute(Instruction.ADDHL, RegisterNames.DE, 0);
-    try std.testing.expectEqual(0x0000, cpu.registers.get_hl()); // Overflow
-    try std.testing.expectEqual(true, f.carry);
-
-    cpu.registers.a = 0;
-    f.carry = true;
-    try cpu.execute(Instruction.ADC, RegisterNames.C, 0);
-    try std.testing.expectEqual(1, cpu.registers.a);
-    try std.testing.expectEqual(false, f.carry);
-
-    // Test ADC with carry flag set and actual carry
-    cpu.registers.a = 0xFF;
-    f.carry = true;
-    cpu.registers.c = 0;
-    try cpu.execute(Instruction.ADC, RegisterNames.C, 0);
-    try std.testing.expectEqual(0, cpu.registers.a);
-    try std.testing.expectEqual(true, f.carry);
+    try std.testing.expectEqual(0xF0, cpu.registers.f);
+    try std.testing.expectEqual(0xFFF0, cpu.registers_u16.AF);
 }
 
-test "basic cpu sub functionality" {
-    var cpu = try CreateCpu();
-    var f: *FlagRegister = @ptrCast(&cpu.registers.f);
-
-    // Test SUB
-    cpu.registers.a = 10;
-    cpu.registers.b = 5;
-    try cpu.execute(Instruction.SUB, RegisterNames.B, 0);
-    try std.testing.expectEqual(5, cpu.registers.a);
-    try std.testing.expectEqual(false, f.carry);
-
-    // Test subtraction with borrow
-    cpu.registers.a = 5;
-    cpu.registers.b = 10;
-    try cpu.execute(Instruction.SUB, RegisterNames.B, 0);
-    try std.testing.expectEqual(251, cpu.registers.a); // Underflow
-    try std.testing.expectEqual(true, f.carry);
-
-    // Test SBC;
-    cpu.registers.a = 5;
-    f.carry = true;
-    cpu.registers.b = 3;
-    try cpu.execute(Instruction.SBC, RegisterNames.B, 0);
-    try std.testing.expectEqual(1, cpu.registers.a);
-    try std.testing.expectEqual(false, f.carry);
-
-    // Test SBC with carry flag set and actual borrow
-    cpu.registers.a = 0;
-    f.carry = true;
-    cpu.registers.b = 0;
-    try cpu.execute(Instruction.SBC, RegisterNames.B, 0);
-    try std.testing.expectEqual(255, cpu.registers.a); // Borrows from previous carry
-    try std.testing.expectEqual(true, f.carry);
-}
-
-test "basic cpu boolean functionality" {
-    var cpu = try CreateCpu();
-    const f: *FlagRegister = @ptrCast(&cpu.registers.f);
-
-    cpu.registers.a = 0xF;
-    cpu.registers.b = 0x3;
-    try cpu.execute(Instruction.AND, RegisterNames.B, 0);
-    try std.testing.expectEqual(0x3, cpu.registers.a);
-    try std.testing.expectEqual(false, f.carry);
-
-    cpu.registers.a = 0xF;
-    cpu.registers.b = 0x3;
-    try cpu.execute(Instruction.OR, RegisterNames.B, 0);
-    try std.testing.expectEqual(0xF, cpu.registers.a);
-    try std.testing.expectEqual(false, f.carry);
-
-    cpu.registers.a = 5;
-    cpu.registers.b = 3;
-    try cpu.execute(Instruction.XOR, RegisterNames.B, 0);
-    try std.testing.expectEqual(6, cpu.registers.a);
-    try std.testing.expectEqual(false, f.carry);
-}
-
-test "INC, DEC, RRA, RLA instructions" {
-    var cpu = try CreateCpu();
-    const f: *FlagRegister = @ptrCast(&cpu.registers.f);
-
-    // INC tests;
-
-    cpu.registers.a = 0xFF;
-    try cpu.execute(Instruction.INC, RegisterNames.A, 0);
-    try std.testing.expectEqual(0, cpu.registers.a);
-    try std.testing.expectEqual(true, f.zero);
-    try std.testing.expectEqual(true, f.carry);
-    try std.testing.expectEqual(true, f.half_carry);
-
-    cpu.registers.a = 0x0F;
-    try cpu.execute(Instruction.INC, RegisterNames.A, 0);
-    try std.testing.expectEqual(0x10, cpu.registers.a);
-    try std.testing.expectEqual(false, f.zero);
-    try std.testing.expectEqual(false, f.carry);
-    try std.testing.expectEqual(true, f.half_carry);
-
-    // DEC tests;
-    cpu.registers.a = 0x01;
-    try cpu.execute(Instruction.DEC, RegisterNames.A, 0);
-    try std.testing.expectEqual(0x00, cpu.registers.a);
-    try std.testing.expectEqual(true, f.zero);
-    try std.testing.expectEqual(false, f.carry);
-    try std.testing.expectEqual(false, f.half_carry);
-
-    cpu.registers.a = 0x10;
-    try cpu.execute(Instruction.DEC, RegisterNames.A, 0);
-    try std.testing.expectEqual(0x0F, cpu.registers.a);
-    try std.testing.expectEqual(false, f.zero);
-    try std.testing.expectEqual(false, f.carry);
-    try std.testing.expectEqual(true, f.half_carry);
-
-    // RRA tests
-    cpu.registers.a = 0x81;
-    f.carry = true;
-    try cpu.execute(Instruction.RRA, RegisterNames.A, 0);
-    try std.testing.expectEqual(0xC0, cpu.registers.a);
-    try std.testing.expectEqual(false, f.zero);
-    try std.testing.expectEqual(true, f.carry);
-    try std.testing.expectEqual(false, f.half_carry);
-
-    // RLA tests
-    cpu.registers.a = 0x40;
-    f.carry = true;
-    try cpu.execute(Instruction.RLA, RegisterNames.A, 0);
-    try std.testing.expectEqual(0x81, cpu.registers.a);
-    try std.testing.expectEqual(false, f.zero);
-    try std.testing.expectEqual(false, f.carry);
-    try std.testing.expectEqual(false, f.half_carry);
+test "Test flag register struct" {
+    var f: u8 = 0xD0;
+    var flag: *FlagsRegister = @ptrCast(&f);
+    flag.h = 1;
+    try std.testing.expectEqual(0xF0, f);
 }
