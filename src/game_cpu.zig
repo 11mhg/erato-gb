@@ -5,19 +5,19 @@ const game_emu = @import("game_emu.zig");
 const game_errors = @import("game_errors.zig");
 const game_proc = @import("game_proc.zig");
 
-//16-bit	Hi	Lo	Name/Function
-//AF	A	-	Accumulator & Flags
-//BC	B	C	BC
-//DE	D	E	DE
-//HL	H	L	HL
-//SP	-	-	Stack Pointer
-//PC	-	-	Program Counter/Pointer
+//16-bit        Hi      Lo      Name/Function
+//AF    A       -       Accumulator & Flags
+//BC    B       C       BC
+//DE    D       E       DE
+//HL    H       L       HL
+//SP    -       -       Stack Pointer
+//PC    -       -       Program Counter/Pointer
 //
-//Bit	Name	Explanation
-//7	z	Zero flag
-//6	n	Subtraction flag (BCD)
-//5	h	Half Carry flag (BCD)
-//4	c	Carry flag
+//Bit   Name    Explanation
+//7     z       Zero flag
+//6     n       Subtraction flag (BCD)
+//5     h       Half Carry flag (BCD)
+//4     c       Carry flag
 
 const FlagsRegister = packed struct(u8) {
     _: u4,
