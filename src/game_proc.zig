@@ -34,10 +34,19 @@ fn proc_jp(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
 
 fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
     if (instruction.reg_1 == game_instructions.RegisterType.NONE) {
-        if (instruction.mode == game_instructions.AddressMode.N16_R) {
-            const address: u16 = cpu.fetched_data;
-            std.debug.print("LD N16 A: 0x{X:0>4}\n", .{address});
-            try write_to_addr(cpu, instruction.reg_2, address);
+        if (instruction.mode == game_instructions.AddressMode.PTR_R) {
+            const addr_hi: u16 = try cpu.emu.memory_bus.?.*.read(cpu.registers.pc);
+            cpu.emu.cycle(1);
+            const addr_lo: u16 = try cpu.emu.memory_bus.?.*.read(cpu.registers.pc + 1);
+            cpu.emu.cycle(1);
+            const address: u16 = addr_lo | (addr_hi << 8);
+            cpu.registers.pc += 2;
+
+            if (try game_instructions.reg_is_u8(instruction.reg_2)) {
+                try write_u8(cpu, address, @truncate(cpu.fetched_data));
+            } else {
+                try write_u16(cpu, address, cpu.fetched_data);
+            }
             return;
         }
     } else {
@@ -46,7 +55,6 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
         cpu.emu.cycle(1);
         return;
     }
-
     return game_errors.EmuErrors.ProcNotImplemented;
 }
 
@@ -59,28 +67,15 @@ fn write_u16(cpu: *game_cpu.CPU, address: u16, value: u16) !void {
     try cpu.emu.memory_bus.?.*.write(address + 1, @truncate(value >> 8));
 }
 
-fn write_to_addr(cpu: *game_cpu.CPU, reg: game_instructions.RegisterType, address: u16) !void {
-    switch (reg) {
-        game_instructions.RegisterType.A => try write_u8(cpu, address, cpu.registers.a),
-        game_instructions.RegisterType.B => try write_u8(cpu, address, cpu.registers.b),
-        game_instructions.RegisterType.C => try write_u8(cpu, address, cpu.registers.c),
-        game_instructions.RegisterType.D => try write_u8(cpu, address, cpu.registers.d),
-        game_instructions.RegisterType.E => try write_u8(cpu, address, cpu.registers.e),
-        game_instructions.RegisterType.F => try write_u8(cpu, address, cpu.registers.f),
-        game_instructions.RegisterType.H => try write_u8(cpu, address, cpu.registers.h),
-        game_instructions.RegisterType.L => try write_u8(cpu, address, cpu.registers.l),
-        game_instructions.RegisterType.AF => try write_u16(cpu, address, cpu.registers_u16.AF),
-        game_instructions.RegisterType.BC => try write_u16(cpu, address, cpu.registers_u16.BC),
-        game_instructions.RegisterType.DE => try write_u16(cpu, address, cpu.registers_u16.DE),
-        game_instructions.RegisterType.HL => try write_u16(cpu, address, cpu.registers_u16.HL),
-        game_instructions.RegisterType.SP => try write_u16(cpu, address, cpu.registers.sp),
-        game_instructions.RegisterType.PC => try write_u16(cpu, address, cpu.registers.pc),
-        game_instructions.RegisterType.NONE => return game_errors.EmuErrors.NotImplementedError,
-    }
-}
-
 fn proc_nop(cpu: *game_cpu.CPU) !void {
     cpu.emu.cycle(1);
+}
+
+fn proc_call(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    if (!try check_cond(cpu, instruction)) {
+        std.debug.print("Did not match cond\n", .{});
+        return;
+    }
 }
 
 pub fn proc(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
@@ -89,6 +84,7 @@ pub fn proc(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
         game_instructions.InstructionType.JP => try proc_jp(cpu, instruction),
         game_instructions.InstructionType.DI => try proc_di(cpu),
         game_instructions.InstructionType.LD => try proc_ld(cpu, instruction),
+        game_instructions.InstructionType.CALL => try proc_call(cpu, instruction),
         else => {
             std.log.debug("Proc not implemented: {s}", .{@tagName(instruction.in_type)});
             return game_errors.EmuErrors.ProcNotImplemented;

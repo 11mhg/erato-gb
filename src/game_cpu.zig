@@ -198,7 +198,7 @@ pub const CPU = struct {
                 self.registers.pc += 1;
                 return;
             },
-            game_instructions.AddressMode.N16, game_instructions.AddressMode.N16_R => {
+            game_instructions.AddressMode.N16 => {
                 const lo: u16 = try self.emu.memory_bus.?.*.read(self.registers.pc);
                 self.emu.cycle(1);
                 const hi: u16 = try self.emu.memory_bus.?.*.read(self.registers.pc + 1);
@@ -207,6 +207,11 @@ pub const CPU = struct {
                 self.registers.pc += 2;
                 return;
             },
+            game_instructions.AddressMode.PTR_R => {
+                self.fetched_data = try self.read_reg(self.current_instruction.?.reg_2);
+                self.emu.cycle(1);
+            },
+            game_instructions.AddressMode.R_PTR => {},
             else => {
                 std.log.debug("Fetch not implemented for address mode: {s}", .{@tagName(self.current_instruction.?.mode)});
                 return game_errors.EmuErrors.OpNotImplementedError;
