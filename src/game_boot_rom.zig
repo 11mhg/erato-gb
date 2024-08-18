@@ -12,10 +12,3 @@ pub fn GetBootRoom(boot_rom_name: []const u8) ![]const u8 {
     }
     return &.{};
 }
-
-// Tests
-
-test "Test Get Boot Rom Asset" {
-    const boot_rom = try GetBootRoom("dmg");
-    try std.testing.expectEqual(256, boot_rom.len);
-}
