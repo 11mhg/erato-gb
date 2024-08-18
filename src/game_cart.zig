@@ -136,12 +136,12 @@ pub const Cart = struct {
 
 test "Test Cartridge reader" {
     const cart = try Cart.init();
-    try cart.read_cart("./roms/tetris.gb");
+    try cart.read_cart("./roms/dmg-acid2.gb");
     try std.testing.expectEqual(0x00, cart.header.rom_size);
-    try std.testing.expect(std.mem.eql(u8, "TETRIS", cart.header.title[0..6]));
+    try std.testing.expect(std.mem.eql(u8, "DMG-ACID", cart.header.title[0..8]));
     try std.testing.expectEqual(cart.data.len, rom_size_map[cart.header.rom_size]);
     try std.testing.expect(cart.data.len > 0);
-    try std.testing.expect(std.mem.eql(u8, "Nintendo", cart.old_lic_code_map.get(cart.header.old_lic_code) orelse "Failed"));
+    try std.testing.expect(std.mem.eql(u8, "None", cart.old_lic_code_map.get(cart.header.old_lic_code) orelse "Failed"));
 
     var checksum: u8 = 0;
     var address: u16 = 0x0134;

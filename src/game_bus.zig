@@ -80,7 +80,7 @@ pub const MemoryBus = struct {
 test "Basic memory bus testing" {
     const emu = try game_emu.Emu.init();
     defer emu.destroy();
-    try emu.prep_emu("./roms/tetris.gb");
+    try emu.prep_emu("./roms/dmg-acid2.gb");
 
     try emu.memory_bus.?.*.write(0x0000, 0xFF);
     try std.testing.expectEqual(0xFF, try emu.memory_bus.?.*.read(0x0000));
