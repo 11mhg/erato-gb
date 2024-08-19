@@ -12,6 +12,7 @@ pub const Emu = struct {
     cart: ?*game_cart.Cart,
     memory_bus: ?*game_bus.MemoryBus,
     cpu: ?*game_cpu.CPU,
+    boot_rom_name: []const u8,
     boot_rom: ?[]const u8,
 
     running: bool,
@@ -27,6 +28,7 @@ pub const Emu = struct {
         emu.cart = null;
         emu.memory_bus = null;
         emu.cpu = null;
+        emu.boot_rom_name = "dmg";
         emu.boot_rom = null;
         emu.running = false;
         emu.paused = false;
@@ -46,7 +48,7 @@ pub const Emu = struct {
         try cart.read_cart(rom_path);
         self.cart = cart;
 
-        const boot_rom: []const u8 = try game_boot_rom.GetBootRoom("dmg");
+        const boot_rom: []const u8 = try game_boot_rom.GetBootRoom(self.boot_rom_name);
         self.boot_rom = boot_rom;
 
         const memory_bus: *game_bus.MemoryBus = try game_bus.MemoryBus.init(self);
@@ -55,17 +57,22 @@ pub const Emu = struct {
         const cpu: *game_cpu.CPU = try game_cpu.CPU.init(self);
         self.cpu = cpu;
 
+        try game_boot_rom.InitializeRegisters(self.cpu.?, self.cart.?, self.boot_rom_name);
+
         self.memory_bus.?.*.map_boot_rom = false;
-        self.cpu.?.*.registers.pc = 0x0100;
 
         self.running = true;
         self.paused = false;
         self.ticks = 0;
     }
 
-    pub fn run(rom_path: ?[]const u8) !void {
+    pub fn run(rom_path: ?[]const u8, boot_rom_name: ?[]const u8) !void {
         const emu = try Emu.init();
         defer emu.destroy();
+
+        if (boot_rom_name) |val| {
+            emu.boot_rom_name = val;
+        }
 
         if (rom_path) |val| {
             try emu.run_with_rom(val);

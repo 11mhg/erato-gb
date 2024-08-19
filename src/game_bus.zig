@@ -2,6 +2,7 @@ const std = @import("std");
 const game_errors = @import("game_errors.zig");
 const game_allocator = @import("game_allocator.zig");
 const game_emu = @import("game_emu.zig");
+const game_ram = @import("game_ram.zig");
 
 // 0000 3FFF    16 KiB ROM bank 00      From cartridge, usually a fixed bank
 // 4000 7FFF    16 KiB ROM Bank 01–NN   From cartridge, switchable bank via mapper (if any)
@@ -20,6 +21,7 @@ pub const MemoryBus = struct {
     allocator: std.mem.Allocator,
     emu: *game_emu.Emu,
     map_boot_rom: bool,
+    ram: *game_ram.RAM,
 
     pub fn read(self: *MemoryBus, address: u16) !u8 {
         var cart = self.emu.cart.?.*;
@@ -33,9 +35,31 @@ pub const MemoryBus = struct {
 
         return switch (address) {
             0x0000...0x7FFF => try cart.read(address),
-            0x8000...0x9FFF => return game_errors.EmuErrors.NotImplementedError,
+            0x8000...0x9FFF => {
+                std.debug.print("[VRAM] - Unsupported bus read 0x{X:0>4}\n", .{address});
+                return game_errors.EmuErrors.NotImplementedError;
+            },
             0xA000...0xBFFF => try cart.read(address),
-            else => game_errors.EmuErrors.NotImplementedError,
+            0xC000...0xDFFF => try self.ram.wram_read(address), //wram
+            0xE000...0xFDFF => {
+                // reserved echo ram
+                return 0;
+            },
+            0xFE00...0xFE9F => {
+                std.debug.print("[OAM] - Unsupported bus read 0x{X:0>4}\n", .{address});
+                return game_errors.EmuErrors.NotImplementedError;
+            },
+            0xFEA0...0xFEFF => {
+                std.debug.print("[Prohibited] - Unsupported bus read 0x{X:0>4}\n", .{address});
+                return 0;
+            },
+            0xFF00...0xFF7F => {
+                // I/O Registers
+                std.debug.print("[I/O] - Unsupported bus read 0x{X:0>4}\n", .{address});
+                return game_errors.EmuErrors.NotImplementedError;
+            },
+            0xFF80...0xFFFE => self.ram.hram_read(address), //hram
+            0xFFFF => self.emu.cpu.?.interrupt_enable, //Interrupt Enable register (IE)
         };
     }
 
@@ -47,14 +71,44 @@ pub const MemoryBus = struct {
                 return;
             },
             0x8000...0x9FFF => {
+                std.debug.print("[VRAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
                 return game_errors.EmuErrors.NotImplementedError;
             },
             0xA000...0xBFFF => {
-                try cart.write(address, value);
+                std.debug.print("[RAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
+                return game_errors.EmuErrors.NotImplementedError;
+            },
+            0xC000...0xDFFF => {
+                // WRAM
+                try self.ram.wram_write(address, value);
                 return;
             },
-            else => {
+            0xE000...0xFDFF => {
+                // reserved echo ram
+                return;
+            },
+            0xFE00...0xFE9F => {
+                std.debug.print("[OAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
                 return game_errors.EmuErrors.NotImplementedError;
+            },
+            0xFEA0...0xFEFF => {
+                std.debug.print("[Prohibited] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
+                return;
+            },
+            0xFF00...0xFF7F => {
+                // I/O Registers
+                std.debug.print("[I/O] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
+                return; //game_errors.EmuErrors.NotImplementedError;
+            },
+            0xFF80...0xFFFE => {
+                //High RAM (HRAM)
+                try self.ram.hram_write(address, value);
+                return;
+            },
+            0xFFFF => {
+                //Interrupt Enable register (IE)
+                self.emu.cpu.?.interrupt_enable = value;
+                return;
             },
         }
     }
@@ -66,11 +120,13 @@ pub const MemoryBus = struct {
         bus.allocator = allocator;
         bus.emu = emu;
         bus.map_boot_rom = false;
+        bus.ram = try game_ram.RAM.init();
 
         return bus;
     }
 
     pub fn destroy(self: *MemoryBus) void {
+        self.ram.destroy();
         self.allocator.destroy(self);
     }
 };
