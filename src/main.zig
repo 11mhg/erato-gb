@@ -12,5 +12,5 @@ pub fn main() !void {
         args[iter] = arg_iterator.next();
     }
 
-    try game_emu.Emu.run(args[1]);
+    try game_emu.Emu.run(args[1], null);
 }
