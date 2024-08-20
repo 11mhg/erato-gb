@@ -45,6 +45,7 @@ pub const CPU = struct {
     current_opcode: u8,
     current_instruction: ?game_instructions.Instruction,
     opcode_instruction_map: std.AutoHashMap(u8, game_instructions.Instruction),
+    prefixed_opcode_instruction_map: std.AutoHashMap(u8, game_instructions.Instruction),
     fetched_data: u16,
 
     interrupt_master_enable: bool,
@@ -85,6 +86,7 @@ pub const CPU = struct {
         cpu.current_opcode = 0;
         cpu.current_instruction = null;
         cpu.opcode_instruction_map = try game_instructions.GetInstructionMap();
+        cpu.prefixed_opcode_instruction_map = try game_instructions.GetPrefixedInstructionMap();
 
         return cpu;
     }
@@ -128,6 +130,8 @@ pub const CPU = struct {
     fn fetch_instruction(self: *CPU) !void {
         self.current_opcode = try self.emu.memory_bus.?.*.read(self.registers.pc);
         self.registers.pc += 1;
+
+        if (self.current_opcode == 0xCB) {}
 
         // fetch the instruction by the op code
         const current_instruction = self.opcode_instruction_map.get(self.current_opcode);
@@ -208,6 +212,13 @@ pub const CPU = struct {
                 self.emu.cycle(1);
                 self.fetched_data = lo | (hi << 8);
                 self.registers.pc += 2;
+                return;
+            },
+            game_instructions.AddressMode.N8 => {
+                const value: u8 = try self.emu.memory_bus.?.*.read(self.registers.pc);
+                self.fetched_data = value;
+                self.emu.cycle(1);
+                self.registers.pc += 1;
                 return;
             },
             game_instructions.AddressMode.N16 => {

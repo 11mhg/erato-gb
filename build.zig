@@ -15,12 +15,20 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const capy_dep = b.dependency("capy", .{
+        .target = target,
+        .optimize = optimize,
+        .app_name = @as([]const u8, "erato-gb"),
+    });
+    const capy = capy_dep.module("capy");
+
     const exe = b.addExecutable(.{
         .name = "erato-gb",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
+    exe.root_module.addImport("capy", capy);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

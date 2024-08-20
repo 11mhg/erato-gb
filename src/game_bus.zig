@@ -98,7 +98,7 @@ pub const MemoryBus = struct {
             0xFF00...0xFF7F => {
                 // I/O Registers
                 std.debug.print("[I/O] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
-                return; //game_errors.EmuErrors.NotImplementedError;
+                return; // game_errors.EmuErrors.NotImplementedError;
             },
             0xFF80...0xFFFE => {
                 //High RAM (HRAM)
