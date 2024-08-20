@@ -81,9 +81,7 @@ pub const Emu = struct {
         }
     }
 
-    fn run_without_rom(_: *Emu) !void {
-        return game_errors.EmuErrors.NotImplementedError;
-    }
+    fn run_without_rom(_: *Emu) !void {}
 
     fn run_with_rom(self: *Emu, rom_path: []const u8) !void {
         try self.prep_emu(rom_path);

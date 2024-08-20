@@ -23,6 +23,10 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
+        .capy = .{
+            .url = "https://github.com/capy-ui/capy/archive/d55a9ddf39ebaeed7d25279c08922bb8cf4613db.tar.gz",
+            .hash = "12202d8a1a46e0e78dc366ba3cb9843821b65ed3d0e110cf705bdeaba9eb8f75ac75",
+        },
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{
         //    // When updating this field to a new URL, be sure to delete the corresponding

@@ -4,7 +4,8 @@
 ## Ops
 
 - [X] NOP
-- [*] LD
+- [X] LD
+    - Missing 0xF8
 - [ ] INC
 - [ ] DEC
 - [ ] RLCA
