@@ -1,4 +1,5 @@
 const std = @import("std");
+const zgui = @import("zgui");
 const game_allocator = @import("game_allocator.zig");
 const game_cart = @import("game_cart.zig");
 const game_bus = @import("game_bus.zig");
@@ -23,6 +24,8 @@ pub const Emu = struct {
 
     pub fn init() !*Emu {
         const allocator = game_allocator.GetAllocator();
+        zgui.init(allocator);
+
         var emu: *Emu = try allocator.create(Emu);
         emu.allocator = game_allocator.GetAllocator();
         emu.cart = null;
@@ -101,6 +104,7 @@ pub const Emu = struct {
     }
 
     pub fn destroy(self: *Emu) void {
+        zgui.deinit();
         if (self.cart) |cart| {
             cart.destroy();
         }
