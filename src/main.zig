@@ -4,6 +4,7 @@ const game_allocator = @import("game_allocator.zig");
 
 pub fn main() !void {
     const allocator = game_allocator.GetAllocator();
+
     var arg_iterator: std.process.ArgIterator = try std.process.argsWithAllocator(allocator);
     defer arg_iterator.deinit();
     var args = [2]?[]const u8{ null, null };

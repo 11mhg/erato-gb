@@ -15,20 +15,32 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const capy_dep = b.dependency("capy", .{
-        .target = target,
-        .optimize = optimize,
-        .app_name = @as([]const u8, "erato-gb"),
-    });
-    const capy = capy_dep.module("capy");
-
     const exe = b.addExecutable(.{
         .name = "erato-gb",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("capy", capy);
+
+    const zgui = b.dependency("zgui", .{
+        .shared = false,
+        .with_implot = false,
+    });
+    exe.root_module.addImport("zgui", zgui.module("root"));
+    exe.linkLibrary(zgui.artifact("imgui"));
+
+    //{
+    //    const zglfw = b.dependency("zglfw", .{});
+    //    exe.root_module.addImport("zglfw", zglfw.module("root"));
+    //    exe.linkLibrary(zglfw.artifact("glfw"));
+
+    //    const zpool = b.dependency("zpool", .{});
+    //    exe.root_module.addImport("zpool", zpool.module("root"));
+
+    //    const zgpu = b.dependency("zgpu", .{});
+    //    exe.root_module.addImport("zgpu", zgpu.module("root"));
+    //    exe.linkLibrary(zgpu.artifact("zdawn"));
+    //}
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -66,6 +78,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    exe_unit_tests.root_module.addImport("zgui", zgui.module("root"));
+    exe_unit_tests.linkLibrary(zgui.artifact("imgui"));
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

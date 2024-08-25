@@ -53,13 +53,21 @@ pub const MemoryBus = struct {
                 std.debug.print("[Prohibited] - Unsupported bus read 0x{X:0>4}\n", .{address});
                 return 0;
             },
-            0xFF00...0xFF7F => {
+            0xFF00...0xFF43 => {
+                // I/O Registers
+                std.debug.print("[I/O] - Unsupported bus read 0x{X:0>4}\n", .{address});
+                return game_errors.EmuErrors.NotImplementedError;
+            },
+            0xFF44 => {
+                return 0x90;
+            },
+            0xFF45...0xFF7F => {
                 // I/O Registers
                 std.debug.print("[I/O] - Unsupported bus read 0x{X:0>4}\n", .{address});
                 return game_errors.EmuErrors.NotImplementedError;
             },
             0xFF80...0xFFFE => self.ram.hram_read(address), //hram
-            0xFFFF => self.emu.cpu.?.interrupt_enable, //Interrupt Enable register (IE)
+            0xFFFF => self.emu.cpu.?.ie_register, //Interrupt Enable register (IE)
         };
     }
 
@@ -107,7 +115,7 @@ pub const MemoryBus = struct {
             },
             0xFFFF => {
                 //Interrupt Enable register (IE)
-                self.emu.cpu.?.interrupt_enable = value;
+                self.emu.cpu.?.ie_register = value;
                 return;
             },
         }

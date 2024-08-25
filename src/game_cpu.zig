@@ -27,7 +27,7 @@ const FlagsRegister = packed struct(u8) {
     z: u1, // zero flag
 };
 
-const Registers = packed struct { a: u8, f: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, sp: u16, pc: u16 };
+const Registers = packed struct { f: u8, a: u8, c: u8, b: u8, e: u8, d: u8, l: u8, h: u8, sp: u16, pc: u16 };
 const RegistersU16 = packed struct {
     AF: u16,
     BC: u16,
@@ -41,6 +41,7 @@ pub const CPU = struct {
     registers: *Registers,
     registers_u16: *RegistersU16,
     flag_register: *FlagsRegister,
+    test_file_log: std.fs.File,
 
     current_opcode: u8,
     current_instruction: ?game_instructions.Instruction,
@@ -48,8 +49,10 @@ pub const CPU = struct {
     prefixed_opcode_instruction_map: std.AutoHashMap(u8, game_instructions.Instruction),
     fetched_data: u16,
 
+    enabling_ime: bool,
     interrupt_master_enable: bool,
-    interrupt_enable: u8,
+    ie_register: u8,
+    int_flags: u8,
 
     halted: bool,
     stepping: bool,
@@ -60,10 +63,16 @@ pub const CPU = struct {
 
         cpu.emu = emu;
         cpu.allocator = allocator;
+        cpu.test_file_log = try std.fs.cwd().createFile(
+            "log-file.txt",
+            .{ .read = true },
+        );
 
         cpu.fetched_data = 0;
+        cpu.enabling_ime = false;
         cpu.interrupt_master_enable = false;
-        cpu.interrupt_enable = 0;
+        cpu.ie_register = 0;
+        cpu.int_flags = 0;
 
         cpu.halted = false;
         cpu.stepping = false;
@@ -92,6 +101,31 @@ pub const CPU = struct {
     }
 
     pub fn step(self: *CPU) !bool {
+        // TESTS
+        const test_log: []const u8 = try std.fmt.allocPrint(
+            self.allocator,
+            "A:{X:0>2} F:{X:0>2} B:{X:0>2} C:{X:0>2} D:{X:0>2} E:{X:0>2} H:{X:0>2} L:{X:0>2} SP:{X:0>4} PC:{X:0>4} PCMEM:{X:0>2},{X:0>2},{X:0>2},{X:0>2}\n",
+            .{
+                self.registers.a,
+                self.registers.f,
+                self.registers.b,
+                self.registers.c,
+                self.registers.d,
+                self.registers.e,
+                self.registers.h,
+                self.registers.l,
+                self.registers.sp,
+                self.registers.pc,
+                try self.emu.memory_bus.?.read(self.registers.pc + 0),
+                try self.emu.memory_bus.?.read(self.registers.pc + 1),
+                try self.emu.memory_bus.?.read(self.registers.pc + 2),
+                try self.emu.memory_bus.?.read(self.registers.pc + 3),
+            },
+        );
+
+        _ = try self.test_file_log.write(test_log);
+        // DONE TESTING LOG
+
         const pc = self.registers.pc;
         const previous_cycle_num = self.emu.cycle_num;
         var new_pc: u16 = 0;
@@ -99,8 +133,8 @@ pub const CPU = struct {
             try self.fetch_instruction();
             try self.fetch_data();
             new_pc = self.registers.pc;
-            const temp_f: u4 = @truncate(self.registers.f >> 4);
-            std.debug.print("{X:0>4}:  {s: >4} ({X:0>2} {X:0>2} {X:0>2}) SP: {X:0>4} A: {X:0>2} BC: {X:0>4} DE: {X:0>4} HL: {X:0>4} F: 0b{b:0>4}\n", .{
+            std.debug.print("{d} - {X:0>4}:  {s: >4} ({X:0>2} {X:0>2} {X:0>2}) SP: {X:0>4} A: {X:0>2} BC: {X:0>4} DE: {X:0>4} HL: {X:0>4} F: {any}\n", .{
+                self.emu.ticks,
                 pc, // Program Counter we started with
                 @tagName(self.current_instruction.?.in_type),
                 try self.emu.memory_bus.?.*.read(pc),
@@ -111,15 +145,70 @@ pub const CPU = struct {
                 self.registers_u16.BC,
                 self.registers_u16.DE,
                 self.registers_u16.HL,
-                temp_f,
+                self.flag_register,
             });
             try self.execute();
+        } else {
+            // Halted
+            self.emu.cycle(1);
+            if (self.int_flags != 0) {
+                self.halted = true;
+            }
         }
+
+        if (self.interrupt_master_enable) {
+            try self.handle_interrupts();
+            self.enabling_ime = false;
+        }
+
+        if (self.enabling_ime) {
+            self.interrupt_master_enable = true;
+        }
+
         const num_cycles = 4 * (self.emu.cycle_num - previous_cycle_num);
         const num_bytes = new_pc - pc;
         std.debug.print("\t Num Bytes: {d} Num Cycles: {d}\n\n", .{ num_bytes, num_cycles });
 
         return true;
+    }
+
+    fn interrupt_handle(self: *CPU, address: u16) !void {
+        try self.stack_push_u16(self.registers.pc);
+        self.registers.pc = address;
+    }
+
+    fn interrupt_check(self: *CPU, address: u16, interrupt_check_val: u8) !bool {
+        const int_flag = self.int_flags & interrupt_check_val;
+        const ie_register = self.ie_register & interrupt_check_val;
+
+        if ((int_flag == interrupt_check_val) and (ie_register == interrupt_check_val)) {
+            try self.interrupt_handle(address);
+            self.int_flags = self.int_flags & (~interrupt_check_val); //reset the interrupt flag at the check value;
+            self.halted = false;
+            self.interrupt_master_enable = false;
+            return true;
+        }
+
+        return false;
+    }
+
+    fn handle_interrupts(self: *CPU) !void {
+        const one: u8 = 1;
+        if (try self.interrupt_check(0x40, one)) {
+            //VBLANK
+
+        } else if (try self.interrupt_check(0x48, one << 1)) {
+            //LCD
+
+        } else if (try self.interrupt_check(0x50, one << 2)) {
+            //TIMER
+
+        } else if (try self.interrupt_check(0x58, one << 3)) {
+            //SERIAL
+
+        } else if (try self.interrupt_check(0x60, one << 4)) {
+            //JoyPad
+        }
     }
 
     fn execute(self: *CPU) !void {
@@ -130,8 +219,6 @@ pub const CPU = struct {
     fn fetch_instruction(self: *CPU) !void {
         self.current_opcode = try self.emu.memory_bus.?.*.read(self.registers.pc);
         self.registers.pc += 1;
-
-        if (self.current_opcode == 0xCB) {}
 
         // fetch the instruction by the op code
         const current_instruction = self.opcode_instruction_map.get(self.current_opcode);
@@ -174,10 +261,26 @@ pub const CPU = struct {
             game_instructions.RegisterType.F => self.registers.f = @truncate(value),
             game_instructions.RegisterType.H => self.registers.h = @truncate(value),
             game_instructions.RegisterType.L => self.registers.l = @truncate(value),
-            game_instructions.RegisterType.AF => self.registers_u16.AF = value,
-            game_instructions.RegisterType.BC => self.registers_u16.BC = value,
-            game_instructions.RegisterType.DE => self.registers_u16.DE = value,
-            game_instructions.RegisterType.HL => self.registers_u16.HL = value,
+            game_instructions.RegisterType.AF => {
+                //self.registers.a = @truncate(value >> 4);
+                //self.registers.f = @truncate(value);
+                self.registers_u16.AF = value;
+            },
+            game_instructions.RegisterType.BC => {
+                //self.registers.b = @truncate(value >> 4);
+                //self.registers.c = @truncate(value);
+                self.registers_u16.BC = value;
+            },
+            game_instructions.RegisterType.DE => {
+                //self.registers.d = @truncate(value >> 4);
+                //self.registers.e = @truncate(value);
+                self.registers_u16.DE = value;
+            },
+            game_instructions.RegisterType.HL => {
+                //self.registers.h = @truncate(value >> 4);
+                //self.registers.l = @truncate(value);
+                self.registers_u16.HL = value;
+            },
             game_instructions.RegisterType.PC => self.registers.pc = value,
             game_instructions.RegisterType.SP => self.registers.sp = value,
         }
@@ -260,12 +363,23 @@ pub const CPU = struct {
                 self.emu.cycle(1);
                 return;
             },
+            game_instructions.AddressMode.R_A16 => {
+                const lo: u8 = try self.emu.memory_bus.?.*.read(self.registers.pc);
+                const hi: u8 = try self.emu.memory_bus.?.*.read(self.registers.pc + 1);
+                self.registers.pc += 2;
+                self.emu.cycle(2);
+                const addr: u16 = @as(u16, lo) | (@as(u16, hi) << 8);
+                self.fetched_data = try self.emu.memory_bus.?.*.read(addr);
+                return;
+            },
             game_instructions.AddressMode.R_R => {
                 self.fetched_data = try self.read_reg(self.current_instruction.?.reg_2);
                 self.emu.cycle(1);
                 return;
             },
             else => {
+                std.log.debug("Op code: 0x{X:0>2}\n", .{self.current_opcode});
+                std.log.debug("Instruction: {any}\n", .{self.current_instruction});
                 std.log.debug("Fetch not implemented for address mode: {s}", .{@tagName(self.current_instruction.?.mode)});
                 return game_errors.EmuErrors.OpNotImplementedError;
             },
@@ -296,6 +410,7 @@ pub const CPU = struct {
     }
 
     pub fn destroy(self: *CPU) void {
+        self.test_file_log.close();
         self.opcode_instruction_map.deinit();
         self.allocator.destroy(self.registers);
         self.allocator.destroy(self);
@@ -327,7 +442,7 @@ test "Test cpu" {
     cpu.registers.a = 0xFF;
 
     try std.testing.expectEqual(0xF0, cpu.registers.f);
-    try std.testing.expectEqual(0xF0FF, cpu.registers_u16.AF);
+    try std.testing.expectEqual(0xFFF0, cpu.registers_u16.AF);
 }
 
 test "Test flag register struct" {
@@ -348,8 +463,8 @@ test "Test lo and hi" {
     const lo: u8 = @truncate(cpu.registers_u16.AF);
     const hi: u8 = @truncate(cpu.registers_u16.AF >> 8);
 
-    try std.testing.expectEqual(0x01, lo);
-    try std.testing.expectEqual(0xB0, hi);
+    try std.testing.expectEqual(0x01, hi);
+    try std.testing.expectEqual(0xB0, lo);
 
     //std.debug.print("LO: 0x{X:0>2}\n", .{lo});
     //std.debug.print("HI: 0x{X:0>2}\n", .{hi});
@@ -357,4 +472,20 @@ test "Test lo and hi" {
     //std.debug.print("AF Bin: 0b{b:0>16}\n", .{cpu.registers_u16.AF});
     //std.debug.print("lo Bin: 0b{b:0>8}\n", .{lo});
     //std.debug.print("hi Bin: 0b{b:0>8}\n", .{hi});
+}
+
+test "Test registers struct" {
+    const emu = try game_emu.Emu.init();
+    defer emu.destroy();
+    try emu.prep_emu("./roms/dmg-acid2.gb");
+    const cpu = emu.cpu.?.*;
+
+    const lo: u16 = 0x00;
+    const hi: u16 = 0x40;
+    const value = (hi << 8) | lo;
+    cpu.registers_u16.HL = value;
+
+    try std.testing.expect(cpu.registers_u16.HL == 0x4000);
+    //std.debug.print("{X:0>4}\n", .{cpu.registers_u16.HL});
+    //std.debug.print("H: {X:0>2} L: {X:0>2}\n", .{ cpu.registers.h, cpu.registers.l });
 }
