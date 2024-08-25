@@ -1,6 +1,12 @@
 const std = @import("std");
+
+const zglfw = @import("zglfw");
+const zgpu = @import("zgpu");
+const wgpu = zgpu.wgpu;
 const zgui = @import("zgui");
+
 const game_allocator = @import("game_allocator.zig");
+const game_ui = @import("game_ui.zig");
 const game_cart = @import("game_cart.zig");
 const game_bus = @import("game_bus.zig");
 const game_cpu = @import("game_cpu.zig");
@@ -13,6 +19,7 @@ pub const Emu = struct {
     cart: ?*game_cart.Cart,
     memory_bus: ?*game_bus.MemoryBus,
     cpu: ?*game_cpu.CPU,
+    ui: ?*game_ui.UI,
     boot_rom_name: []const u8,
     boot_rom: ?[]const u8,
 
@@ -24,10 +31,9 @@ pub const Emu = struct {
 
     pub fn init() !*Emu {
         const allocator = game_allocator.GetAllocator();
-        zgui.init(allocator);
-
         var emu: *Emu = try allocator.create(Emu);
         emu.allocator = game_allocator.GetAllocator();
+        emu.ui = try game_ui.UI.init(emu);
         emu.cart = null;
         emu.memory_bus = null;
         emu.cpu = null;
@@ -84,7 +90,13 @@ pub const Emu = struct {
         }
     }
 
-    fn run_without_rom(_: *Emu) !void {}
+    fn run_without_rom(self: *Emu) !void {
+        while (!self.ui.?.window.shouldClose()) {
+            self.ui.?.pre_render();
+            self.ui.?.render();
+            self.ui.?.post_render();
+        }
+    }
 
     fn run_with_rom(self: *Emu, rom_path: []const u8) !void {
         try self.prep_emu(rom_path);
@@ -104,7 +116,9 @@ pub const Emu = struct {
     }
 
     pub fn destroy(self: *Emu) void {
-        zgui.deinit();
+        if (self.ui) |ui| {
+            ui.destroy();
+        }
         if (self.cart) |cart| {
             cart.destroy();
         }

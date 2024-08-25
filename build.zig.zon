@@ -23,10 +23,11 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
+        .system_sdk = .{ .path = "extern/system-sdk" },
         .zgui = .{ .path = "extern/zgui" },
         .zgpu = .{ .path = "extern/zgpu" },
-        .zpool = .{ .path = "extern/zpool" },
         .zglfw = .{ .path = "extern/zglfw" },
+        .zpool = .{ .path = "extern/zpool" },
         .dawn_x86_64_windows_gnu = .{
             .url = "https://github.com/michal-z/webgpu_dawn-x86_64-windows-gnu/archive/d3a68014e6b6b53fd330a0ccba99e4dcfffddae5.tar.gz",
             .hash = "1220f9448cde02ef3cd51bde2e0850d4489daa0541571d748154e89c6eb46c76a267",

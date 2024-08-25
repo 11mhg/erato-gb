@@ -22,25 +22,36 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    @import("system_sdk").addLibraryPathsTo(exe);
+    const libraryTarget = exe.rootModuleTarget();
+
+    switch (libraryTarget.os.tag) {
+        .windows => {
+            exe.addLibraryPath(b.dependency("dawn_x86_64_windows_gnu", .{}).path(""));
+        },
+        .linux => {
+            exe.addLibraryPath(b.dependency(if (libraryTarget.cpu.arch.isX86()) "dawn_x86_64_linux_gnu" else "dawn_aarch64_linux_gnu", .{}).path(""));
+        },
+        .macos => {
+            exe.addLibraryPath(b.dependency(if (libraryTarget.cpu.arch.isX86()) "dawn_x86_64_macos" else "dawn_aarch64_macos", .{}).path(""));
+        },
+        else => {},
+    }
+
+    const zglfw = b.dependency("zglfw", .{ .target = target });
+    exe.root_module.addImport("zglfw", zglfw.module("root"));
+    exe.linkLibrary(zglfw.artifact("glfw"));
+
     const zgui = b.dependency("zgui", .{
-        .shared = false,
-        .with_implot = false,
+        .target = target,
+        .backend = .glfw_wgpu,
     });
     exe.root_module.addImport("zgui", zgui.module("root"));
     exe.linkLibrary(zgui.artifact("imgui"));
 
-    //{
-    //    const zglfw = b.dependency("zglfw", .{});
-    //    exe.root_module.addImport("zglfw", zglfw.module("root"));
-    //    exe.linkLibrary(zglfw.artifact("glfw"));
-
-    //    const zpool = b.dependency("zpool", .{});
-    //    exe.root_module.addImport("zpool", zpool.module("root"));
-
-    //    const zgpu = b.dependency("zgpu", .{});
-    //    exe.root_module.addImport("zgpu", zgpu.module("root"));
-    //    exe.linkLibrary(zgpu.artifact("zdawn"));
-    //}
+    const zgpu = b.dependency("zgpu", .{});
+    exe.root_module.addImport("zgpu", zgpu.module("root"));
+    exe.linkLibrary(zgpu.artifact("zdawn"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -79,8 +90,30 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    @import("system_sdk").addLibraryPathsTo(exe);
+    const testTarget = exe_unit_tests.rootModuleTarget();
+
+    switch (testTarget.os.tag) {
+        .windows => {
+            exe_unit_tests.addLibraryPath(b.dependency("dawn_x86_64_windows_gnu", .{}).path(""));
+        },
+        .linux => {
+            exe_unit_tests.addLibraryPath(b.dependency(if (testTarget.cpu.arch.isX86()) "dawn_x86_64_linux_gnu" else "dawn_aarch64_linux_gnu", .{}).path(""));
+        },
+        .macos => {
+            exe_unit_tests.addLibraryPath(b.dependency(if (testTarget.cpu.arch.isX86()) "dawn_x86_64_macos" else "dawn_aarch64_macos", .{}).path(""));
+        },
+        else => {},
+    }
+
+    exe_unit_tests.root_module.addImport("zglfw", zglfw.module("root"));
+    exe_unit_tests.linkLibrary(zglfw.artifact("glfw"));
+
     exe_unit_tests.root_module.addImport("zgui", zgui.module("root"));
     exe_unit_tests.linkLibrary(zgui.artifact("imgui"));
+
+    exe_unit_tests.root_module.addImport("zgpu", zgpu.module("root"));
+    exe_unit_tests.linkLibrary(zgpu.artifact("zdawn"));
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
