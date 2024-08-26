@@ -93,7 +93,7 @@ pub const Emu = struct {
     fn run_without_rom(self: *Emu) !void {
         while (!self.ui.?.window.shouldClose()) {
             self.ui.?.pre_render();
-            self.ui.?.render();
+            try self.ui.?.render();
             self.ui.?.post_render();
         }
     }

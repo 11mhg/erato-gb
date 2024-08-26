@@ -18,6 +18,7 @@ pub const UI = struct {
     window: *zglfw.Window,
     gctx: *zgpu.GraphicsContext,
     emu: *game_emu.Emu,
+    file_dialog: *file_dialog.FileDialog,
 
     pub fn init(emu: *game_emu.Emu) !*UI {
         const allocator = game_allocator.GetAllocator();
@@ -25,6 +26,7 @@ pub const UI = struct {
         var ui: *UI = try allocator.create(UI);
         ui.allocator = allocator;
         ui.emu = emu;
+        ui.file_dialog = try file_dialog.FileDialog.init();
 
         // Initialize all GUI stuff here
         {
@@ -79,7 +81,10 @@ pub const UI = struct {
                 break :scale_factor @max(scale[0], scale[1]);
             };
 
-            zgui.getStyle().scaleAllSizes(scale_factor);
+            const style = zgui.getStyle();
+            style.scaleAllSizes(scale_factor);
+            style.window_rounding = 5.3;
+            style.frame_rounding = 2.3;
         }
         // Done initializing gui stuff
 
@@ -122,26 +127,22 @@ pub const UI = struct {
         _ = self.gctx.present();
     }
 
-    pub fn render(self: *UI) void {
-        const size = self.window.getSize();
+    pub fn render(self: *UI) !void {
         if (zgui.beginMainMenuBar()) {
             if (zgui.beginMenu("File", true)) {
                 if (zgui.menuItem("Open", .{})) {
-                    zgui.setNextWindowPos(.{
-                        .x = @floor(@as(f32, @floatFromInt(size[0])) / 2),
-                        .y = @floor(@as(f32, @floatFromInt(size[1])) / 2),
-                        .cond = .first_use_ever,
-                    });
-                    zgui.setNextWindowSize(.{ .w = -1.0, .h = -1.0, .cond = .first_use_ever });
-                    _ = file_dialog.open();
+                    self.file_dialog.enable();
                 }
                 zgui.endMenu();
             }
             zgui.endMainMenuBar();
         }
+
+        _ = try self.file_dialog.render();
     }
 
     pub fn destroy(self: *UI) void {
+        self.file_dialog.destroy();
         zgui.backend.deinit();
         zgui.deinit();
         self.gctx.destroy(self.allocator);
