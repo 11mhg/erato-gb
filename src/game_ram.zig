@@ -13,8 +13,8 @@ pub const RAM = struct {
 
         const ram = try allocator.create(RAM);
         ram.allocator = allocator;
-        ram.wram = try allocator.alloc(u8, 0x2000);
-        ram.hram = try allocator.alloc(u8, 0x80);
+        ram.wram = try allocator.alloc(u8, 0x2000); // 8192
+        ram.hram = try allocator.alloc(u8, 0x80); //  128
 
         @memset(ram.wram, 0x00);
         @memset(ram.hram, 0x00);

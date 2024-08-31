@@ -49,6 +49,8 @@ pub const UI = struct {
 
             std.debug.print("W: {d} H: {d}\n", .{ window_width, window_height });
 
+            zglfw.swapInterval(0);
+            zglfw.windowHintTyped(zglfw.WindowHint.doublebuffer, false);
             ui.window = try zglfw.Window.create(window_width, window_height, window_name, null);
             ui.window.setSizeLimits(gb_width, gb_height, -1, -1);
 
@@ -84,11 +86,57 @@ pub const UI = struct {
             const style = zgui.getStyle();
             style.scaleAllSizes(scale_factor);
             style.window_rounding = 5.3;
-            style.frame_rounding = 2.3;
+
+            ui.setup_imgui_theme();
         }
         // Done initializing gui stuff
 
         return ui;
+    }
+
+    pub fn setup_imgui_theme(_: *UI) void {
+        // This style is from the dougbinks' gist: https://gist.github.com/dougbinks/8089b4bbaccaaf6fa204236978d165a9#file-imguiutils-h-L9-L93
+        const style: *zgui.Style = zgui.getStyle();
+
+        // light style from Pacôme Danhiez (user itamago) https://github.com/ocornut/imgui/pull/511#issuecomment-175719267
+        style.alpha = 1.0;
+        style.frame_rounding = 3.0;
+        style.setColor(zgui.StyleCol.text, [4]f32{ 0.0, 0.0, 0.0, 1.0 });
+        style.setColor(zgui.StyleCol.text_disabled, [4]f32{ 0.60, 0.60, 0.60, 1.00 });
+        style.setColor(zgui.StyleCol.window_bg, [4]f32{ 0.94, 0.94, 0.94, 0.94 });
+        style.setColor(zgui.StyleCol.child_bg, [4]f32{ 0.00, 0.00, 0.00, 0.00 });
+        style.setColor(zgui.StyleCol.popup_bg, [4]f32{ 1.00, 1.00, 1.00, 0.94 });
+        style.setColor(zgui.StyleCol.border, [4]f32{ 0.00, 0.00, 0.00, 0.39 });
+        style.setColor(zgui.StyleCol.border_shadow, [4]f32{ 1.00, 1.00, 1.00, 0.10 });
+        style.setColor(zgui.StyleCol.frame_bg, [4]f32{ 1.00, 1.00, 1.00, 0.94 });
+        style.setColor(zgui.StyleCol.frame_bg_hovered, [4]f32{ 0.26, 0.59, 0.98, 0.40 });
+        style.setColor(zgui.StyleCol.frame_bg_active, [4]f32{ 0.26, 0.59, 0.98, 0.67 });
+        style.setColor(zgui.StyleCol.title_bg, [4]f32{ 0.96, 0.96, 0.96, 1.00 });
+        style.setColor(zgui.StyleCol.title_bg_collapsed, [4]f32{ 1.00, 1.00, 1.00, 0.51 });
+        style.setColor(zgui.StyleCol.title_bg_active, [4]f32{ 0.82, 0.82, 0.82, 1.00 });
+        style.setColor(zgui.StyleCol.menu_bar_bg, [4]f32{ 0.86, 0.86, 0.86, 1.00 });
+        style.setColor(zgui.StyleCol.scrollbar_bg, [4]f32{ 0.98, 0.98, 0.98, 0.53 });
+        style.setColor(zgui.StyleCol.scrollbar_grab, [4]f32{ 0.69, 0.69, 0.69, 1.00 });
+        style.setColor(zgui.StyleCol.scrollbar_grab_hovered, [4]f32{ 0.59, 0.59, 0.59, 1.00 });
+        style.setColor(zgui.StyleCol.scrollbar_grab_active, [4]f32{ 0.49, 0.49, 0.49, 1.00 });
+        style.setColor(zgui.StyleCol.check_mark, [4]f32{ 0.26, 0.59, 0.98, 1.00 });
+        style.setColor(zgui.StyleCol.slider_grab, [4]f32{ 0.24, 0.52, 0.88, 1.00 });
+        style.setColor(zgui.StyleCol.slider_grab_active, [4]f32{ 0.26, 0.59, 0.98, 1.00 });
+        style.setColor(zgui.StyleCol.button, [4]f32{ 0.26, 0.59, 0.98, 0.40 });
+        style.setColor(zgui.StyleCol.button_hovered, [4]f32{ 0.26, 0.59, 0.98, 1.00 });
+        style.setColor(zgui.StyleCol.button_active, [4]f32{ 0.06, 0.53, 0.98, 1.00 });
+        style.setColor(zgui.StyleCol.header, [4]f32{ 0.26, 0.59, 0.98, 0.31 });
+        style.setColor(zgui.StyleCol.header_hovered, [4]f32{ 0.26, 0.59, 0.98, 0.80 });
+        style.setColor(zgui.StyleCol.header_active, [4]f32{ 0.26, 0.59, 0.98, 1.00 });
+        style.setColor(zgui.StyleCol.resize_grip, [4]f32{ 1.00, 1.00, 1.00, 0.50 });
+        style.setColor(zgui.StyleCol.resize_grip_hovered, [4]f32{ 0.26, 0.59, 0.98, 0.67 });
+        style.setColor(zgui.StyleCol.resize_grip_active, [4]f32{ 0.26, 0.59, 0.98, 0.95 });
+        style.setColor(zgui.StyleCol.plot_lines, [4]f32{ 0.39, 0.39, 0.39, 1.00 });
+        style.setColor(zgui.StyleCol.plot_lines_hovered, [4]f32{ 1.00, 0.43, 0.35, 1.00 });
+        style.setColor(zgui.StyleCol.plot_histogram, [4]f32{ 0.90, 0.70, 0.00, 1.00 });
+        style.setColor(zgui.StyleCol.plot_histogram_hovered, [4]f32{ 1.00, 0.60, 0.00, 1.00 });
+        style.setColor(zgui.StyleCol.text_selected_bg, [4]f32{ 0.26, 0.59, 0.98, 0.35 });
+        style.setColor(zgui.StyleCol.modal_window_dim_bg, [4]f32{ 0.20, 0.20, 0.20, 0.35 });
     }
 
     pub fn pre_render(self: *UI) void {
@@ -138,7 +186,15 @@ pub const UI = struct {
             zgui.endMainMenuBar();
         }
 
-        _ = try self.file_dialog.render();
+        if (try self.file_dialog.render()) {
+            try self.emu.prep_emu(self.file_dialog.path.?);
+        }
+
+        if (zgui.begin("FPS", .{})) {
+            const fps = zgui.io.getFramerate();
+            zgui.text("{d} FPS", .{fps});
+            zgui.end();
+        }
     }
 
     pub fn destroy(self: *UI) void {

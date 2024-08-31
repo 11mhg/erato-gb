@@ -147,6 +147,10 @@ pub const CPU = struct {
                 self.registers_u16.HL,
                 self.flag_register,
             });
+
+            try self.emu.dbg.?.update(self.emu.memory_bus.?);
+            self.emu.dbg.?.print();
+
             try self.execute();
         } else {
             // Halted

@@ -74,6 +74,11 @@ pub const FileDialog = struct {
             zgui.end();
         }
 
+        if (self.path) |_| {
+            self.enabled = false;
+            return true;
+        }
+
         return false;
     }
 
@@ -163,6 +168,7 @@ pub const FileDialog = struct {
 
                             if (self.path) |value| {
                                 self.allocator.free(value);
+                                self.path = value;
                             }
                             self.path = try self.allocator.dupe(u8, new_full_path);
                             @memset(self.search_term, 0);

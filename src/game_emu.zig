@@ -13,19 +13,23 @@ const game_cpu = @import("game_cpu.zig");
 const game_utils = @import("game_utils.zig");
 const game_errors = @import("game_errors.zig");
 const game_boot_rom = @import("game_boot_rom.zig");
+const game_dbg = @import("game_dbg.zig");
 
 pub const Emu = struct {
     allocator: ?std.mem.Allocator,
-    cart: ?*game_cart.Cart,
-    memory_bus: ?*game_bus.MemoryBus,
-    cpu: ?*game_cpu.CPU,
-    ui: ?*game_ui.UI,
     boot_rom_name: []const u8,
     boot_rom: ?[]const u8,
+    cart: ?*game_cart.Cart,
+    cpu: ?*game_cpu.CPU,
+    dbg: ?*game_dbg.DBG,
+    memory_bus: ?*game_bus.MemoryBus,
+    ui: ?*game_ui.UI,
 
+    cartridge_loaded: bool,
     running: bool,
     paused: bool,
     ticks: u64,
+    curr_error: ?game_errors.EmuErrors,
 
     cycle_num: u32,
 
@@ -35,6 +39,7 @@ pub const Emu = struct {
         emu.allocator = game_allocator.GetAllocator();
         emu.ui = try game_ui.UI.init(emu);
         emu.cart = null;
+        emu.dbg = null;
         emu.memory_bus = null;
         emu.cpu = null;
         emu.boot_rom_name = "dmg";
@@ -43,6 +48,8 @@ pub const Emu = struct {
         emu.paused = false;
         emu.ticks = 0;
         emu.cycle_num = 0;
+        emu.cartridge_loaded = false;
+        emu.curr_error = undefined;
         return emu;
     }
 
@@ -56,6 +63,7 @@ pub const Emu = struct {
         const cart: *game_cart.Cart = try game_cart.Cart.init();
         try cart.read_cart(rom_path);
         self.cart = cart;
+        self.cartridge_loaded = true;
 
         const boot_rom: []const u8 = try game_boot_rom.GetBootRoom(self.boot_rom_name);
         self.boot_rom = boot_rom;
@@ -65,6 +73,9 @@ pub const Emu = struct {
 
         const cpu: *game_cpu.CPU = try game_cpu.CPU.init(self);
         self.cpu = cpu;
+
+        const dbg: *game_dbg.DBG = try game_dbg.DBG.init();
+        self.dbg = dbg;
 
         try game_boot_rom.InitializeRegisters(self.cpu.?, self.cart.?, self.boot_rom_name);
 
@@ -84,34 +95,26 @@ pub const Emu = struct {
         }
 
         if (rom_path) |val| {
-            try emu.run_with_rom(val);
-        } else {
-            try emu.run_without_rom();
+            try emu.prep_emu(val);
         }
+
+        try emu.run_();
     }
 
-    fn run_without_rom(self: *Emu) !void {
+    fn run_(self: *Emu) !void {
         while (!self.ui.?.window.shouldClose()) {
+            if (self.running and self.cartridge_loaded) {
+                const succeeded = try self.cpu.?.*.step();
+                if (!succeeded) {
+                    return game_errors.EmuErrors.StepFailedError;
+                }
+
+                self.ticks += 1;
+            }
+
             self.ui.?.pre_render();
             try self.ui.?.render();
             self.ui.?.post_render();
-        }
-    }
-
-    fn run_with_rom(self: *Emu, rom_path: []const u8) !void {
-        try self.prep_emu(rom_path);
-
-        while (self.running) {
-            if (self.paused) {
-                game_utils.sleep(0.1);
-            }
-
-            const succeeded = try self.cpu.?.*.step();
-            if (!succeeded) {
-                return game_errors.EmuErrors.StepFailedError;
-            }
-
-            self.ticks += 1;
         }
     }
 
