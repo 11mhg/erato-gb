@@ -4,6 +4,7 @@ const game_allocator = @import("game_allocator.zig");
 const game_emu = @import("game_emu.zig");
 const game_ram = @import("game_ram.zig");
 const game_io = @import("game_io.zig");
+const game_timer = @import("game_timer.zig");
 
 // 0000 3FFF    16 KiB ROM bank 00      From cartridge, usually a fixed bank
 // 4000 7FFF    16 KiB ROM Bank 01–NN   From cartridge, switchable bank via mapper (if any)
@@ -39,7 +40,7 @@ pub const MemoryBus = struct {
             0x0000...0x7FFF => try cart.read(address),
             0x8000...0x9FFF => {
                 std.debug.print("[VRAM] - Unsupported bus read 0x{X:0>4}\n", .{address});
-                return game_errors.EmuErrors.NotImplementedError;
+                return 0; //game_errors.EmuErrors.NotImplementedError;
             },
             0xA000...0xBFFF => try cart.read(address),
             0xC000...0xDFFF => try self.ram.wram_read(address), //wram
@@ -72,7 +73,7 @@ pub const MemoryBus = struct {
             },
             0x8000...0x9FFF => {
                 std.debug.print("[VRAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
-                return game_errors.EmuErrors.NotImplementedError;
+                return; //game_errors.EmuErrors.NotImplementedError;
             },
             0xA000...0xBFFF => {
                 std.debug.print("[RAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
@@ -113,7 +114,7 @@ pub const MemoryBus = struct {
         }
     }
 
-    pub fn init(emu: *game_emu.Emu) !*MemoryBus {
+    pub fn init(emu: *game_emu.Emu, timer: *game_timer.Timer) !*MemoryBus {
         const allocator = game_allocator.GetAllocator();
         const bus = try allocator.create(MemoryBus);
 
@@ -121,7 +122,7 @@ pub const MemoryBus = struct {
         bus.emu = emu;
         bus.map_boot_rom = false;
         bus.ram = try game_ram.RAM.init();
-        bus.io = try game_io.IO.init();
+        bus.io = try game_io.IO.init(emu, timer);
 
         return bus;
     }

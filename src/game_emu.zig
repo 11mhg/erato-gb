@@ -1,10 +1,5 @@
 const std = @import("std");
 
-const zglfw = @import("zglfw");
-const zgpu = @import("zgpu");
-const wgpu = zgpu.wgpu;
-const zgui = @import("zgui");
-
 const game_allocator = @import("game_allocator.zig");
 const game_ui = @import("game_ui.zig");
 const game_cart = @import("game_cart.zig");
@@ -14,6 +9,7 @@ const game_utils = @import("game_utils.zig");
 const game_errors = @import("game_errors.zig");
 const game_boot_rom = @import("game_boot_rom.zig");
 const game_dbg = @import("game_dbg.zig");
+const game_timer = @import("game_timer.zig");
 
 pub const Emu = struct {
     allocator: ?std.mem.Allocator,
@@ -24,11 +20,13 @@ pub const Emu = struct {
     dbg: ?*game_dbg.DBG,
     memory_bus: ?*game_bus.MemoryBus,
     ui: ?*game_ui.UI,
+    timer: ?*game_timer.Timer,
 
     cartridge_loaded: bool,
     running: bool,
     paused: bool,
     ticks: u64,
+    debug_counter: u64,
     curr_error: ?game_errors.EmuErrors,
 
     cycle_num: u32,
@@ -38,6 +36,7 @@ pub const Emu = struct {
         var emu: *Emu = try allocator.create(Emu);
         emu.allocator = game_allocator.GetAllocator();
         emu.ui = try game_ui.UI.init(emu);
+        emu.timer = null;
         emu.cart = null;
         emu.dbg = null;
         emu.memory_bus = null;
@@ -47,6 +46,7 @@ pub const Emu = struct {
         emu.running = false;
         emu.paused = false;
         emu.ticks = 0;
+        emu.debug_counter = 0;
         emu.cycle_num = 0;
         emu.cartridge_loaded = false;
         emu.curr_error = undefined;
@@ -56,6 +56,10 @@ pub const Emu = struct {
     pub fn cycle(self: *Emu, num_cycles: u32) void {
         //TODO: Update cycles to keep PPU in step with CPU.
         self.cycle_num += num_cycles;
+        for (0..(num_cycles * 4)) |_| {
+            self.ticks += 1;
+            self.timer.?.tick();
+        }
     }
 
     pub fn prep_emu(self: *Emu, rom_path: []const u8) !void {
@@ -68,7 +72,10 @@ pub const Emu = struct {
         const boot_rom: []const u8 = try game_boot_rom.GetBootRoom(self.boot_rom_name);
         self.boot_rom = boot_rom;
 
-        const memory_bus: *game_bus.MemoryBus = try game_bus.MemoryBus.init(self);
+        const timer: *game_timer.Timer = try game_timer.Timer.init(self);
+        self.timer = timer;
+
+        const memory_bus: *game_bus.MemoryBus = try game_bus.MemoryBus.init(self, self.timer.?);
         self.memory_bus = memory_bus;
 
         const cpu: *game_cpu.CPU = try game_cpu.CPU.init(self);
@@ -108,13 +115,11 @@ pub const Emu = struct {
                 if (!succeeded) {
                     return game_errors.EmuErrors.StepFailedError;
                 }
-
-                self.ticks += 1;
+                self.debug_counter += 1;
             }
-
-            self.ui.?.pre_render();
-            try self.ui.?.render();
-            self.ui.?.post_render();
+            //self.ui.?.pre_render();
+            //try self.ui.?.render();
+            //self.ui.?.post_render();
         }
     }
 
@@ -124,6 +129,9 @@ pub const Emu = struct {
         }
         if (self.cart) |cart| {
             cart.destroy();
+        }
+        if (self.timer) |timer| {
+            timer.destroy();
         }
         if (self.memory_bus) |memory_bus| {
             memory_bus.destroy();

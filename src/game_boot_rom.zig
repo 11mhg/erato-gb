@@ -32,6 +32,13 @@ pub fn InitializeRegisters(cpu: *game_cpu.CPU, cart: *game_cart.Cart, boot_rom_n
 
         cpu.registers.pc = 0x0100;
         cpu.registers.sp = 0xFFFE;
+
+        cpu.ie_register = 0;
+        cpu.int_flags = 0;
+        cpu.interrupt_master_enable = false;
+        cpu.enabling_ime = false;
+
+        cpu.emu.timer.?.div = 0xABCC;
     }
 
     return;

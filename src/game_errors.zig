@@ -4,4 +4,5 @@ pub const EmuErrors = error{
     NotImplementedError,
     InvalidChecksumError,
     ProcNotImplemented,
+    UnexpectedBehavior,
 };

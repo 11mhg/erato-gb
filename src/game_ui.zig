@@ -4,19 +4,19 @@ const game_emu = @import("game_emu.zig");
 const file_dialog = @import("ui/file_dialog.zig");
 
 const zglfw = @import("zglfw");
-const zgpu = @import("zgpu");
-const wgpu = zgpu.wgpu;
 const zgui = @import("zgui");
+const zopengl = @import("zopengl");
 
 pub const window_name = "Erato-gb";
 pub const gb_width: i32 = 160;
 pub const gb_height: i32 = 144;
 pub const aspect_ratio: f32 = @as(f32, @floatFromInt(gb_height)) / @as(f32, @floatFromInt(gb_width));
 
+const gl = zopengl.bindings;
+
 pub const UI = struct {
     allocator: std.mem.Allocator,
     window: *zglfw.Window,
-    gctx: *zgpu.GraphicsContext,
     emu: *game_emu.Emu,
     file_dialog: *file_dialog.FileDialog,
 
@@ -49,43 +49,34 @@ pub const UI = struct {
 
             std.debug.print("W: {d} H: {d}\n", .{ window_width, window_height });
 
-            zglfw.swapInterval(0);
-            zglfw.windowHintTyped(zglfw.WindowHint.doublebuffer, false);
+            const gl_major: u32 = 4;
+            const gl_minor: u32 = 0;
+            zglfw.windowHintTyped(.context_version_major, gl_major);
+            zglfw.windowHintTyped(.context_version_minor, gl_minor);
+            zglfw.windowHintTyped(.opengl_profile, .opengl_core_profile);
+            zglfw.windowHintTyped(.opengl_forward_compat, true);
+            zglfw.windowHintTyped(.client_api, .opengl_api);
+            zglfw.windowHintTyped(.doublebuffer, false);
+
             ui.window = try zglfw.Window.create(window_width, window_height, window_name, null);
             ui.window.setSizeLimits(gb_width, gb_height, -1, -1);
 
-            ui.gctx = try zgpu.GraphicsContext.create(
-                ui.allocator,
-                .{
-                    .window = ui.window,
-                    .fn_getTime = @ptrCast(&zglfw.getTime),
-                    .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
-                    .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
-                    .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
-                    .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
-                    .fn_getWaylandDisplay = @ptrCast(&zglfw.getWaylandDisplay),
-                    .fn_getWaylandSurface = @ptrCast(&zglfw.getWaylandWindow),
-                    .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
-                },
-                .{},
-            );
-            zgui.init(ui.allocator);
+            zglfw.makeContextCurrent(ui.window);
+            zglfw.swapInterval(0);
 
-            zgui.backend.init(
-                ui.window,
-                ui.gctx.device,
-                @intFromEnum(zgpu.GraphicsContext.swapchain_format),
-                @intFromEnum(wgpu.TextureFormat.undef),
-            );
+            try zopengl.loadCoreProfile(zglfw.getProcAddress, gl_major, gl_minor);
+
+            zgui.init(ui.allocator);
 
             const scale_factor = scale_factor: {
                 const scale = ui.window.getContentScale();
                 break :scale_factor @max(scale[0], scale[1]);
             };
-
             const style = zgui.getStyle();
             style.scaleAllSizes(scale_factor);
             style.window_rounding = 5.3;
+
+            zgui.backend.init(ui.window);
 
             ui.setup_imgui_theme();
         }
@@ -142,37 +133,21 @@ pub const UI = struct {
     pub fn pre_render(self: *UI) void {
         zglfw.pollEvents();
 
-        zgui.backend.newFrame(
-            self.gctx.swapchain_descriptor.width,
-            self.gctx.swapchain_descriptor.height,
-        );
+        gl.clearBufferfv(gl.COLOR, 0, &[_]f32{ 0, 0, 0, 1.0 });
 
-        //zgui.setNextWindowPos(.{ .x = 20.0, .y = 20.0, .cond = .first_use_ever });
-        //zgui.setNextWindowSize(.{ .w = -1.0, .h = -1.0, .cond = .first_use_ever });
+        const fb_size = self.window.getFramebufferSize();
+
+        zgui.backend.newFrame(
+            @intCast(fb_size[0]),
+            @intCast(fb_size[1]),
+        );
 
         return;
     }
 
     pub fn post_render(self: *UI) void {
-        const swapchain_texv = self.gctx.swapchain.getCurrentTextureView();
-        defer swapchain_texv.release();
-
-        const commands = commands: {
-            const encoder = self.gctx.device.createCommandEncoder(null);
-            defer encoder.release();
-
-            {
-                const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
-                defer zgpu.endReleasePass(pass);
-                zgui.backend.draw(pass);
-            }
-
-            break :commands encoder.finish(null);
-        };
-        defer commands.release();
-
-        self.gctx.submit(&.{commands});
-        _ = self.gctx.present();
+        zgui.backend.draw();
+        self.window.swapBuffers();
     }
 
     pub fn render(self: *UI) !void {
@@ -201,7 +176,6 @@ pub const UI = struct {
         self.file_dialog.destroy();
         zgui.backend.deinit();
         zgui.deinit();
-        self.gctx.destroy(self.allocator);
         self.window.destroy();
         zglfw.terminate();
         self.allocator.destroy(self);

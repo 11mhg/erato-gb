@@ -387,8 +387,7 @@ pub fn GetInstructionMap() !std.AutoHashMap(u8, Instruction) {
     try instruction_map.put(0xF6, Instruction{ .in_type = InstructionType.OR, .mode = AddressMode.R_N8, .reg_1 = RegisterType.A });
     try instruction_map.put(0xF7, Instruction{ .in_type = InstructionType.RST, .param = 0x30 });
 
-    //0xF8 needs completion
-    //try instruction_map.put(0xF8, Instruction{ .in_type = InstructionType.LD, .mode = AddressMode.R_
+    try instruction_map.put(0xF8, Instruction{ .in_type = InstructionType.LD, .mode = AddressMode.R_N8, .reg_1 = RegisterType.HL, .reg_2 = RegisterType.SP });
     try instruction_map.put(0xF9, Instruction{ .in_type = InstructionType.LD, .mode = AddressMode.R_R, .reg_1 = RegisterType.SP, .reg_2 = RegisterType.HL });
     try instruction_map.put(0xFA, Instruction{ .in_type = InstructionType.LD, .mode = AddressMode.R_A16, .reg_1 = RegisterType.A });
     try instruction_map.put(0xFB, Instruction{ .in_type = InstructionType.EI, .mode = AddressMode.IMP });

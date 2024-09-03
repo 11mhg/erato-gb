@@ -7,7 +7,7 @@ fn sub_with_carry_check_u16(left: u16, right: u16) std.meta.Tuple(&.{ u16, u1, u
     const overflow_result = @subWithOverflow(left, right);
     const result = overflow_result[0];
     const overflow = overflow_result[1];
-    const half_carry: u1 = @intFromBool(@subWithOverflow(left & 0x00FF, right & 0x00FF)[0] & 0x0100 == 0x0100);
+    const half_carry: u1 = @intFromBool(@subWithOverflow(left & 0x0FFF, right & 0x0FFF)[0] & 0x1000 == 0x1000);
     return .{ result, overflow, half_carry };
 }
 
@@ -31,7 +31,7 @@ fn add_with_carry_check_u16(left: u16, right: u16) std.meta.Tuple(&.{ u16, u1, u
     const overflow_result = @addWithOverflow(left, right);
     const result = overflow_result[0];
     const overflow = overflow_result[1];
-    const half_carry: u1 = @intFromBool(@addWithOverflow(left & 0x00FF, right & 0x00FF)[0] & 0x0100 == 0x0100);
+    const half_carry: u1 = @intFromBool(@addWithOverflow(left & 0x0FFF, right & 0x0FFF)[0] & 0x1000 == 0x1000);
     return .{ result, overflow, half_carry };
 }
 
@@ -56,16 +56,16 @@ fn proc_di(cpu: *game_cpu.CPU) !void {
 }
 
 fn proc_ei(cpu: *game_cpu.CPU) !void {
-    cpu.emu.cycle(1);
     cpu.enabling_ime = true;
+    cpu.emu.cycle(1);
     return;
 }
 
 fn proc_jp_impl(cpu: *game_cpu.CPU, cond: game_instructions.ConditionType, addr: u16, push_pc: bool) !void {
     if (try check_cond(cpu, cond)) {
         if (push_pc) {
-            try cpu.stack_push_u16(cpu.registers.pc);
             cpu.emu.cycle(2);
+            try cpu.stack_push_u16(cpu.registers.pc);
         }
         cpu.registers.pc = addr;
         cpu.emu.cycle(1);
@@ -73,6 +73,9 @@ fn proc_jp_impl(cpu: *game_cpu.CPU, cond: game_instructions.ConditionType, addr:
 }
 
 fn proc_jp(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    if (instruction.mode != game_instructions.AddressMode.R) {
+        cpu.emu.cycle(1);
+    }
     try proc_jp_impl(cpu, instruction.cond, cpu.fetched_data, false);
 }
 
@@ -108,8 +111,38 @@ fn proc_ldd(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
 
 fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
     switch (instruction.mode) {
-        game_instructions.AddressMode.R_A16, game_instructions.AddressMode.R_PTR, game_instructions.AddressMode.R_N8, game_instructions.AddressMode.R_N16, game_instructions.AddressMode.R_R => {
+        game_instructions.AddressMode.R_A16, game_instructions.AddressMode.R_N16, game_instructions.AddressMode.R_R => {
             const value: u16 = cpu.fetched_data;
+            try cpu.write_reg(instruction.reg_1, value);
+            cpu.emu.cycle(1);
+            return;
+        },
+        game_instructions.AddressMode.R_N8 => {
+            var value: u16 = cpu.fetched_data;
+            if (instruction.reg_2 == game_instructions.RegisterType.SP) {
+                //bloating up to i32 b/c e8 comes in as i8 and u16
+                //can support more numbers than i16
+                const e8: i8 = @bitCast(@as(u8, @truncate(cpu.fetched_data)));
+                const sub: bool = e8 < 0;
+                const sp: u16 = @intCast(cpu.registers.sp);
+
+                const half_carry: u1 = @intFromBool(((sp & 0xF) + (cpu.fetched_data & 0xF)) >= 0x10);
+                const overflow: u1 = @intFromBool(((sp & 0xFF) + (cpu.fetched_data & 0xFF)) >= 0x100);
+
+                if (sub) {
+                    value = @subWithOverflow(sp, @abs(e8))[0];
+                } else {
+                    value = @addWithOverflow(sp, @abs(e8))[0];
+                }
+
+                std.debug.print("SP: {X:0>4} e8: {d} = {X:0>4}\n", .{ sp, e8, value });
+
+                cpu.flag_register.z = 0;
+                cpu.flag_register.n = 0;
+                cpu.flag_register.h = half_carry;
+                cpu.flag_register.c = overflow;
+                cpu.emu.cycle(1);
+            }
             try cpu.write_reg(instruction.reg_1, value);
             cpu.emu.cycle(1);
             return;
@@ -127,20 +160,43 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
             } else {
                 try write_u16(cpu, address, cpu.fetched_data);
             }
+            cpu.emu.cycle(2);
+            return;
+        },
+        game_instructions.AddressMode.R_PTR => {
+            var value: u16 = cpu.fetched_data;
+            if (instruction.reg_2 == game_instructions.RegisterType.C) {
+                const addr_lo: u16 = try cpu.read_reg(instruction.reg_2);
+                const addr: u16 = 0xFF00 | addr_lo;
+                value = try cpu.emu.memory_bus.?.read(addr);
+            }
+            std.debug.print("LD {s} {X:0>2}\n", .{ @tagName(instruction.reg_1), value });
+            try cpu.write_reg(instruction.reg_1, value);
+            cpu.emu.cycle(1);
             return;
         },
         game_instructions.AddressMode.PTR_R => {
             const addr: u16 = try cpu.read_reg(instruction.reg_1);
+            cpu.emu.cycle(2);
 
             if (try game_instructions.reg_is_u8(instruction.reg_2)) {
                 try write_u8(cpu, addr, @truncate(cpu.fetched_data));
             } else {
+                cpu.emu.cycle(1);
                 try write_u16(cpu, addr, cpu.fetched_data);
             }
             return;
         },
+        game_instructions.AddressMode.PTR_N8 => {
+            const addr: u16 = try cpu.read_reg(instruction.reg_1);
+            cpu.emu.cycle(1);
+
+            try write_u8(cpu, addr, @truncate(cpu.fetched_data));
+            return;
+        },
         else => {
             std.debug.print("LD with address mode {s} not implemented yet", .{@tagName(instruction.mode)});
+            std.debug.print("{any}\n", .{instruction});
         },
     }
     std.log.debug("Proc not implemented: {s}", .{@tagName(instruction.in_type)});
@@ -149,15 +205,21 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
 
 fn proc_ldh(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
     if (instruction.mode == game_instructions.AddressMode.A8_R) {
-        const addr_lo: u16 = try cpu.emu.memory_bus.?.*.read(cpu.registers.pc);
-        const address: u16 = addr_lo | 0xFF00;
-        cpu.emu.cycle(1);
+        const value: u8 = @truncate(cpu.fetched_data);
+
+        const addr_lo: u8 = try cpu.emu.memory_bus.?.*.read(cpu.registers.pc);
+        const address: u16 = 0xFF00 | @as(u16, addr_lo);
+
         cpu.registers.pc += 1;
-        try write_u8(cpu, address, @truncate(cpu.fetched_data));
-        cpu.emu.cycle(1);
+
+        try write_u8(cpu, address, value);
+        cpu.emu.cycle(2);
         return;
     } else if (instruction.mode == game_instructions.AddressMode.R_A8) {
         const value: u16 = cpu.fetched_data;
+        const original_address_lo: u16 = try cpu.emu.memory_bus.?.read(cpu.registers.pc - 1);
+        const original_address: u16 = 0xFF00 | original_address_lo;
+        std.debug.print("address: {X:0>4} value: {X:0>4} register: {s}\n", .{ original_address, value, @tagName(instruction.reg_1) });
         try cpu.write_reg(instruction.reg_1, value);
         cpu.emu.cycle(1);
         return;
@@ -182,10 +244,12 @@ fn proc_nop(cpu: *game_cpu.CPU) !void {
 }
 
 fn proc_call(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    cpu.emu.cycle(1);
     try proc_jp_impl(cpu, instruction.cond, cpu.fetched_data, true);
 }
 
 fn proc_xor(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    cpu.emu.cycle(1);
     const right: u8 = @truncate(cpu.fetched_data);
     const left: u8 = @truncate(try cpu.read_reg(instruction.reg_1));
     const result: u8 = left ^ right;
@@ -216,12 +280,14 @@ fn proc_inc(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
         cpu.flag_register.z = @intFromBool(result == 0);
         cpu.flag_register.n = 0;
         cpu.flag_register.h = half_carry;
+        cpu.emu.cycle(1);
     } else {
         //u16
         const value: u16 = cpu.fetched_data;
         const overflow_results = add_with_carry_check_u16(value, 1);
         const result: u16 = overflow_results[0];
         try cpu.write_reg(instruction.reg_1, result);
+        cpu.emu.cycle(2);
     }
 }
 
@@ -235,24 +301,24 @@ fn proc_dec(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
 
         if (instruction.mode == game_instructions.AddressMode.PTR) {
             // PTR result
-            cpu.emu.cycle(1);
             try write_u8(cpu, try cpu.read_reg(instruction.reg_1), result);
+            cpu.emu.cycle(1);
         } else {
             // Register result
             try cpu.write_reg(instruction.reg_1, result);
         }
-        cpu.emu.cycle(1);
 
         cpu.flag_register.z = @intFromBool(result == 0);
         cpu.flag_register.n = 1;
         cpu.flag_register.h = half_carry;
+        cpu.emu.cycle(1);
     } else {
         //u16
-        cpu.emu.cycle(1);
         const value: u16 = cpu.fetched_data;
         const overflow_results = sub_with_carry_check_u16(value, 1);
         const result: u16 = overflow_results[0];
         try cpu.write_reg(instruction.reg_1, result);
+        cpu.emu.cycle(2);
     }
 }
 
@@ -261,8 +327,9 @@ fn proc_push(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !vo
         try cpu.stack_push_u8(@truncate(cpu.fetched_data));
     } else {
         try cpu.stack_push_u16(cpu.fetched_data);
+        cpu.emu.cycle(1);
     }
-    cpu.emu.cycle(1);
+    cpu.emu.cycle(3);
 }
 
 fn proc_pop(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
@@ -272,8 +339,9 @@ fn proc_pop(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
     } else {
         const value: u16 = try cpu.stack_pop_u16();
         try cpu.write_reg(instruction.reg_1, value);
+        cpu.emu.cycle(1);
     }
-    cpu.emu.cycle(1);
+    cpu.emu.cycle(2);
 }
 
 fn proc_jr(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
@@ -292,10 +360,12 @@ fn proc_jr(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
         addr += offset_u16;
     }
 
+    cpu.emu.cycle(1);
     try proc_jp_impl(cpu, instruction.cond, addr, false);
 }
 
 fn proc_ret(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    cpu.emu.cycle(1);
     if (instruction.cond != game_instructions.ConditionType.NONE) {
         cpu.emu.cycle(1);
     }
@@ -326,6 +396,7 @@ fn proc_add(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
     const left: u16 = try cpu.read_reg(instruction.reg_1);
 
     if (try game_instructions.reg_is_u8(instruction.reg_1)) {
+        cpu.emu.cycle(1);
         const overflow_result = add_with_carry_check_u8(@truncate(left), @truncate(right));
         const result: u8 = overflow_result[0];
         const carry: u1 = overflow_result[1];
@@ -339,41 +410,39 @@ fn proc_add(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
         cpu.flag_register.c = carry;
         return;
     } else if (instruction.reg_1 == game_instructions.RegisterType.SP) {
-        const right_u8: u8 = @truncate(right);
-        const right_signed: i8 = @bitCast(right_u8);
-        const sub: bool = right_signed < 0;
-        const right_abs: u16 = @intCast(@abs(right_signed));
+        cpu.emu.cycle(2);
+        const e8: i8 = @bitCast(@as(u8, @truncate(right)));
+        const sub: bool = e8 < 0;
+        const sp: u16 = @intCast(left);
 
+        const half_carry: u1 = @intFromBool(((sp & 0xF) + (right & 0xF)) >= 0x10);
+        const overflow: u1 = @intFromBool(((sp & 0xFF) + (right & 0xFF)) >= 0x100);
         var result: u16 = 0;
-        var carry: u1 = 0;
-        var half_carry: u1 = 0;
 
         if (sub) {
-            const overflow_result = sub_with_carry_check_u16(left, right_abs);
-            result = overflow_result[0];
-            carry = overflow_result[1];
-            half_carry = overflow_result[2];
+            result = @subWithOverflow(sp, @abs(e8))[0];
         } else {
-            const overflow_result = add_with_carry_check_u16(left, right_abs);
-            result = overflow_result[0];
-            carry = overflow_result[1];
-            half_carry = overflow_result[2];
+            result = @addWithOverflow(sp, @abs(e8))[0];
         }
+
         try cpu.write_reg(instruction.reg_1, result);
 
         cpu.flag_register.z = 0;
         cpu.flag_register.n = 0;
         cpu.flag_register.h = half_carry;
-        cpu.flag_register.c = carry;
+        cpu.flag_register.c = overflow;
         return;
     } else {
+        cpu.emu.cycle(1);
         const overflow_result = add_with_carry_check_u16(left, right);
         const result: u16 = overflow_result[0];
         const carry: u1 = overflow_result[1];
         const half_carry: u1 = overflow_result[2];
 
         try cpu.write_reg(instruction.reg_1, result);
-
+        if (!try game_instructions.reg_is_u8(instruction.reg_1)) {
+            cpu.emu.cycle(1);
+        }
         cpu.flag_register.n = 0;
         cpu.flag_register.h = half_carry;
         cpu.flag_register.c = carry;
@@ -384,6 +453,7 @@ fn proc_add(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
 }
 
 fn proc_adc(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    cpu.emu.cycle(1);
     const right: u8 = @truncate(cpu.fetched_data);
     const left: u8 = @truncate(try cpu.read_reg(instruction.reg_1));
     const carry_value: u8 = cpu.flag_register.c;
@@ -404,6 +474,7 @@ fn proc_adc(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
 }
 
 fn proc_sub(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    cpu.emu.cycle(1);
     const right: u8 = @truncate(cpu.fetched_data);
     const left: u8 = @truncate(try cpu.read_reg(instruction.reg_1));
 
@@ -427,8 +498,8 @@ fn proc_sbc(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
     const left: u8 = @truncate(try cpu.read_reg(instruction.reg_1));
     const carry_value: u8 = cpu.flag_register.c;
 
-    const overflow_result_1 = sub_with_carry_check_u8(right, carry_value);
-    const overflow_result_2 = sub_with_carry_check_u8(left, overflow_result_1[0]);
+    const overflow_result_1 = sub_with_carry_check_u8(left, right);
+    const overflow_result_2 = sub_with_carry_check_u8(overflow_result_1[0], carry_value);
 
     const result: u8 = overflow_result_2[0];
     const carry: u1 = overflow_result_1[1] | overflow_result_2[1];
@@ -443,6 +514,7 @@ fn proc_sbc(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
 }
 
 fn proc_and(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    cpu.emu.cycle(1);
     const right: u8 = @truncate(cpu.fetched_data);
     const left: u8 = @truncate(try cpu.read_reg(instruction.reg_1));
 
@@ -457,6 +529,7 @@ fn proc_and(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
 }
 
 fn proc_or(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    cpu.emu.cycle(1);
     const right: u8 = @truncate(cpu.fetched_data);
     const left: u8 = @truncate(try cpu.read_reg(instruction.reg_1));
 
@@ -471,6 +544,7 @@ fn proc_or(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
 }
 
 fn proc_cp(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void {
+    cpu.emu.cycle(1);
     const right: u8 = @truncate(cpu.fetched_data);
     const left: u8 = @truncate(try cpu.read_reg(instruction.reg_1));
 
@@ -493,7 +567,6 @@ fn proc_rlca(cpu: *game_cpu.CPU) !void {
 
     const result: u8 = value << 1 | @as(u8, carry);
     cpu.registers.a = result;
-    cpu.emu.cycle(1);
 
     cpu.flag_register.z = 0;
     cpu.flag_register.n = 0;
@@ -507,7 +580,6 @@ fn proc_rrca(cpu: *game_cpu.CPU) !void {
 
     const result: u8 = (value >> 1) | (@as(u8, carry) << 7);
     cpu.registers.a = result;
-    cpu.emu.cycle(1);
 
     cpu.flag_register.z = 0;
     cpu.flag_register.n = 0;
@@ -531,6 +603,7 @@ fn proc_rla(cpu: *game_cpu.CPU) !void {
 }
 
 fn proc_rra(cpu: *game_cpu.CPU) !void {
+    cpu.emu.cycle(1);
     const value: u8 = cpu.registers.a;
     const carry: u1 = @truncate(value & 0x1);
 
@@ -546,56 +619,49 @@ fn proc_rra(cpu: *game_cpu.CPU) !void {
 }
 
 fn proc_daa(cpu: *game_cpu.CPU) !void {
-    var value: u8 = cpu.registers.a;
-    var correction: u8 = 0;
-    var set_c: u1 = 0;
+    var u: u8 = 0;
+    var fc: u1 = 0;
 
-    if ((cpu.flag_register.h == 1) or (cpu.flag_register.n != 1 and ((value & 0x0F) > 0x09))) {
-        correction |= 0x06;
+    if ((cpu.flag_register.h != 0) or (!(cpu.flag_register.n != 0) and ((cpu.registers.a & 0xF) > 9))) {
+        u = 6;
     }
 
-    if ((cpu.flag_register.c == 1) or (cpu.flag_register.n != 1 and (value > 0x99))) {
-        correction |= 0x60;
-        set_c = 1;
+    if ((cpu.flag_register.c != 0) or (!(cpu.flag_register.n != 0) and (cpu.registers.a > 0x99))) {
+        u = u | 0x60;
+        fc = 1;
     }
 
-    if (cpu.flag_register.n == 0) {
-        value = value - correction;
+    if (cpu.flag_register.n != 0) {
+        cpu.registers.a = @subWithOverflow(cpu.registers.a, u)[0];
     } else {
-        value = value + correction;
+        cpu.registers.a = @addWithOverflow(cpu.registers.a, u)[0];
     }
 
-    cpu.emu.cycle(1);
-    cpu.registers.a = value;
-    cpu.flag_register.z = @intFromBool(value == 0);
+    cpu.flag_register.z = @intFromBool(cpu.registers.a == 0);
     cpu.flag_register.h = 0;
-    cpu.flag_register.c = set_c;
+    cpu.flag_register.c = fc;
 }
 
 fn proc_cpl(cpu: *game_cpu.CPU) !void {
     cpu.registers.a = ~cpu.registers.a;
-    cpu.emu.cycle(1);
 
     cpu.flag_register.n = 1;
     cpu.flag_register.h = 1;
 }
 
 fn proc_scf(cpu: *game_cpu.CPU) !void {
-    cpu.emu.cycle(1);
     cpu.flag_register.n = 0;
     cpu.flag_register.h = 0;
     cpu.flag_register.c = 1;
 }
 
 fn proc_ccf(cpu: *game_cpu.CPU) !void {
-    cpu.emu.cycle(1);
     cpu.flag_register.n = 0;
     cpu.flag_register.h = 0;
     cpu.flag_register.c = ~cpu.flag_register.c;
 }
 
 fn proc_halt(cpu: *game_cpu.CPU) !void {
-    cpu.emu.cycle(1);
     cpu.halted = true;
 }
 
@@ -826,6 +892,7 @@ pub fn proc(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
         game_instructions.InstructionType.HALT => try proc_halt(cpu),
         game_instructions.InstructionType.CB => try proc_cb(cpu),
         game_instructions.InstructionType.EI => try proc_ei(cpu),
+        game_instructions.InstructionType.RRA => try proc_rra(cpu),
         else => {
             std.log.debug("Proc not implemented: {s}", .{@tagName(instruction.in_type)});
             return game_errors.EmuErrors.ProcNotImplemented;
