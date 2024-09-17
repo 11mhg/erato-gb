@@ -90,7 +90,7 @@ fn proc_ldi(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
     if (instruction.mode == game_instructions.AddressMode.R_PTR) {
         reg_to_choose = instruction.reg_2;
     }
-    const value = (try cpu.read_reg(reg_to_choose)) + 1;
+    const value = @addWithOverflow(try cpu.read_reg(reg_to_choose), 1)[0];
     try cpu.write_reg(reg_to_choose, value);
 }
 
@@ -105,7 +105,7 @@ fn proc_ldd(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
     if (instruction.mode == game_instructions.AddressMode.R_PTR) {
         reg_to_choose = instruction.reg_2;
     }
-    const value = (try cpu.read_reg(reg_to_choose)) - 1;
+    const value = @subWithOverflow(try cpu.read_reg(reg_to_choose), 1)[0];
     try cpu.write_reg(reg_to_choose, value);
 }
 
@@ -115,6 +115,10 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
             const value: u16 = cpu.fetched_data;
             try cpu.write_reg(instruction.reg_1, value);
             cpu.emu.cycle(1);
+            std.debug.print("Register: {s} Value: {X:0>2}", .{ @tagName(instruction.reg_1), @as(u8, @truncate(value)) });
+            if (cpu.current_opcode == 0xF9) {
+                cpu.emu.cycle(1);
+            }
             return;
         },
         game_instructions.AddressMode.R_N8 => {
@@ -149,16 +153,19 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
         },
         game_instructions.AddressMode.A16_R => {
             const addr_lo: u16 = try cpu.emu.memory_bus.?.*.read(cpu.registers.pc);
-            cpu.emu.cycle(1);
             const addr_hi: u16 = try cpu.emu.memory_bus.?.*.read(cpu.registers.pc + 1);
-            cpu.emu.cycle(1);
             const address: u16 = addr_lo | (addr_hi << 8);
+            cpu.emu.cycle(2);
             cpu.registers.pc += 2;
 
             if (try game_instructions.reg_is_u8(instruction.reg_2)) {
                 try write_u8(cpu, address, @truncate(cpu.fetched_data));
             } else {
                 try write_u16(cpu, address, cpu.fetched_data);
+            }
+
+            if (instruction.reg_2 == game_instructions.RegisterType.SP) {
+                cpu.emu.cycle(1);
             }
             cpu.emu.cycle(2);
             return;
@@ -170,14 +177,24 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
                 const addr: u16 = 0xFF00 | addr_lo;
                 value = try cpu.emu.memory_bus.?.read(addr);
             }
-            std.debug.print("LD {s} {X:0>2}\n", .{ @tagName(instruction.reg_1), value });
             try cpu.write_reg(instruction.reg_1, value);
             cpu.emu.cycle(1);
             return;
         },
         game_instructions.AddressMode.PTR_R => {
-            const addr: u16 = try cpu.read_reg(instruction.reg_1);
+            var addr: u16 = try cpu.read_reg(instruction.reg_1);
+            if (cpu.current_opcode == 0xE2) {
+                // This is a LD [0xFF + C] A 
+                addr = 0xFF00 | addr;
+            }
             cpu.emu.cycle(2);
+
+            if (cpu.current_opcode == 0xE2) {
+                const addr_inner: u16 = try cpu.read_reg(instruction.reg_1); 
+                const value_to_write: u8 = @truncate(cpu.fetched_data);
+
+                std.debug.print("0xE2 == 0xE2 - Address: {X:0>4} value: {X:0>2}\n", .{ addr_inner, value_to_write });
+            }
 
             if (try game_instructions.reg_is_u8(instruction.reg_2)) {
                 try write_u8(cpu, addr, @truncate(cpu.fetched_data));
@@ -209,6 +226,8 @@ fn proc_ldh(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
 
         const addr_lo: u8 = try cpu.emu.memory_bus.?.*.read(cpu.registers.pc);
         const address: u16 = 0xFF00 | @as(u16, addr_lo);
+
+        std.debug.print("address: {X:0>4} value: {X:0>4} register: {s}\n", .{ address, value, @tagName(instruction.reg_2) });
 
         cpu.registers.pc += 1;
 

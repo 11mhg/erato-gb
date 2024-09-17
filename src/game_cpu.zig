@@ -151,6 +151,9 @@ pub const CPU = struct {
         if (!self.halted) {
             try self.fetch_instruction();
             try self.fetch_data();
+            if (self.emu.debug_counter > 100000 and self.current_opcode == 0x22) {
+                std.debug.print("Found it!\n", .{});
+            }
             new_pc = self.registers.pc;
             std.debug.print("{d} - {X:0>4}:  {s: >4} ({X:0>2} {X:0>2} {X:0>2}) SP: {X:0>4} A: {X:0>2} BC: {X:0>4} DE: {X:0>4} HL: {X:0>4} F: ({X:0>2}) {any}\n", .{
                 self.emu.debug_counter,
@@ -175,6 +178,8 @@ pub const CPU = struct {
                     self.emu.memory_bus.?.read(self.registers.sp + 3) catch 0xFF,
                 });
             }
+
+            std.debug.print("0xFF91: {X:0>2}\n.", .{ try self.emu.memory_bus.?.read(0xFF91) });
 
             try self.emu.dbg.?.update(self.emu.memory_bus.?);
             self.emu.dbg.?.print();
