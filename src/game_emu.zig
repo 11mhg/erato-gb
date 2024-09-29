@@ -10,6 +10,7 @@ const game_errors = @import("game_errors.zig");
 const game_boot_rom = @import("game_boot_rom.zig");
 const game_dbg = @import("game_dbg.zig");
 const game_timer = @import("game_timer.zig");
+const game_ppu = @import("game_ppu.zig");
 
 pub const Emu = struct {
     allocator: ?std.mem.Allocator,
@@ -21,6 +22,7 @@ pub const Emu = struct {
     memory_bus: ?*game_bus.MemoryBus,
     ui: ?*game_ui.UI,
     timer: ?*game_timer.Timer,
+    ppu: ?*game_ppu.PPU,
 
     cartridge_loaded: bool,
     running: bool,
@@ -35,7 +37,9 @@ pub const Emu = struct {
         const allocator = game_allocator.GetAllocator();
         var emu: *Emu = try allocator.create(Emu);
         emu.allocator = game_allocator.GetAllocator();
-        emu.ui = try game_ui.UI.init(emu);
+        if (!game_utils.is_debug()) {
+            emu.ui = try game_ui.UI.init(emu);
+        }
         emu.timer = null;
         emu.cart = null;
         emu.dbg = null;
@@ -50,6 +54,7 @@ pub const Emu = struct {
         emu.cycle_num = 0;
         emu.cartridge_loaded = false;
         emu.curr_error = undefined;
+        emu.ppu = null;
         return emu;
     }
 
@@ -75,7 +80,10 @@ pub const Emu = struct {
         const timer: *game_timer.Timer = try game_timer.Timer.init(self);
         self.timer = timer;
 
-        const memory_bus: *game_bus.MemoryBus = try game_bus.MemoryBus.init(self, self.timer.?);
+        const ppu: *game_ppu.PPU = try game_ppu.PPU.init();
+        self.ppu = ppu;
+
+        const memory_bus: *game_bus.MemoryBus = try game_bus.MemoryBus.init(self, self.timer.?, self.ppu.?);
         self.memory_bus = memory_bus;
 
         const cpu: *game_cpu.CPU = try game_cpu.CPU.init(self);
@@ -105,7 +113,23 @@ pub const Emu = struct {
             try emu.prep_emu(val);
         }
 
-        try emu.run_();
+        if (game_utils.is_debug()) {
+            try emu.run_debug();
+        } else {
+            try emu.run_();
+        }
+    }
+
+    fn run_debug(self: *Emu) !void {
+        while (true) {
+            if (self.running and self.cartridge_loaded) {
+                const succeeded = try self.cpu.?.*.step();
+                if (!succeeded) {
+                    return game_errors.EmuErrors.StepFailedError;
+                }
+                self.debug_counter += 1;
+            }
+        }
     }
 
     fn run_(self: *Emu) !void {
@@ -117,15 +141,17 @@ pub const Emu = struct {
                 }
                 self.debug_counter += 1;
             }
-            //self.ui.?.pre_render();
-            //try self.ui.?.render();
-            //self.ui.?.post_render();
+            self.ui.?.pre_render();
+            try self.ui.?.render();
+            self.ui.?.post_render();
         }
     }
 
     pub fn destroy(self: *Emu) void {
         if (self.ui) |ui| {
-            ui.destroy();
+            if (!game_utils.is_debug()) {
+                ui.destroy();
+            }
         }
         if (self.cart) |cart| {
             cart.destroy();
@@ -135,6 +161,9 @@ pub const Emu = struct {
         }
         if (self.memory_bus) |memory_bus| {
             memory_bus.destroy();
+        }
+        if (self.ppu) |ppu| {
+            ppu.destroy();
         }
         if (self.cpu) |cpu| {
             cpu.destroy();

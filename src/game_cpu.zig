@@ -4,6 +4,7 @@ const game_instructions = @import("game_instructions.zig");
 const game_emu = @import("game_emu.zig");
 const game_errors = @import("game_errors.zig");
 const game_proc = @import("game_proc.zig");
+const game_utils = @import("game_utils.zig");
 
 //16-bit        Hi      Lo      Name/Function
 //AF    A       -       Accumulator & Flags
@@ -65,6 +66,9 @@ pub const CPU = struct {
     halted: bool,
     stepping: bool,
 
+    debug_mode: bool,
+    verbose: bool,
+
     pub fn init(emu: *game_emu.Emu) !*CPU {
         const allocator = game_allocator.GetAllocator();
         const cpu = try allocator.create(CPU);
@@ -105,12 +109,16 @@ pub const CPU = struct {
         cpu.opcode_instruction_map = try game_instructions.GetInstructionMap();
         cpu.prefixed_opcode_instruction_map = try game_instructions.GetPrefixedInstructionMap();
 
+        // hard coded debug mode to enable and disable logs
+        cpu.debug_mode = true;
+        cpu.verbose = true;
+
         return cpu;
     }
 
     pub fn step(self: *CPU) !bool {
         // TESTS
-        if (!self.halted) {
+        if (!self.halted and self.debug_mode and self.verbose) {
             const test_log: []const u8 = try std.fmt.allocPrint(
                 self.allocator,
                 "A:{X:0>2} F:{X:0>2} B:{X:0>2} C:{X:0>2} D:{X:0>2} E:{X:0>2} H:{X:0>2} L:{X:0>2} SP:{X:0>4} PC:{X:0>4} PCMEM:{X:0>2},{X:0>2},{X:0>2},{X:0>2}\n",
@@ -151,11 +159,8 @@ pub const CPU = struct {
         if (!self.halted) {
             try self.fetch_instruction();
             try self.fetch_data();
-            if (self.emu.debug_counter > 100000 and self.current_opcode == 0x22) {
-                std.debug.print("Found it!\n", .{});
-            }
             new_pc = self.registers.pc;
-            std.debug.print("{d} - {X:0>4}:  {s: >4} ({X:0>2} {X:0>2} {X:0>2}) SP: {X:0>4} A: {X:0>2} BC: {X:0>4} DE: {X:0>4} HL: {X:0>4} F: ({X:0>2}) {any}\n", .{
+            if (true or self.verbose) std.debug.print("{d} - {X:0>4}:  {s: >4} ({X:0>2} {X:0>2} {X:0>2}) SP: {X:0>4} A: {X:0>2} BC: {X:0>4} DE: {X:0>4} HL: {X:0>4} PC: {X:0>4} F: ({X:0>2}) {any}\n", .{
                 self.emu.debug_counter,
                 pc, // Program Counter we started with
                 @tagName(self.current_instruction.?.in_type),
@@ -167,11 +172,12 @@ pub const CPU = struct {
                 self.registers_u16.BC,
                 self.registers_u16.DE,
                 self.registers_u16.HL,
+                self.registers.pc,
                 self.registers.f,
                 self.flag_register,
             });
-            if (self.registers.sp <= 0xFFFD) {
-                std.debug.print("Stack Value: {X:0>2}{X:0>2} {X:0>2}{X:0>2}\n", .{
+            if (self.registers.sp <= 0xFFFD and self.registers.sp >= 0xC000) {
+                if (self.verbose) std.debug.print("Stack Value: {X:0>2}{X:0>2} {X:0>2}{X:0>2}\n", .{
                     try self.emu.memory_bus.?.read(self.registers.sp), // HI
                     try self.emu.memory_bus.?.read(self.registers.sp + 1), // LO
                     self.emu.memory_bus.?.read(self.registers.sp + 2) catch 0xFF,
@@ -179,10 +185,10 @@ pub const CPU = struct {
                 });
             }
 
-            std.debug.print("0xFF91: {X:0>2}\n.", .{ try self.emu.memory_bus.?.read(0xFF91) });
+            if (self.verbose) std.debug.print("0xFF91: {X:0>2}\n.", .{try self.emu.memory_bus.?.read(0xFF91)});
 
             try self.emu.dbg.?.update(self.emu.memory_bus.?);
-            self.emu.dbg.?.print();
+            if (self.verbose) self.emu.dbg.?.print();
 
             try self.execute();
         } else {
@@ -195,7 +201,7 @@ pub const CPU = struct {
 
         const num_cycles = 4 * (self.emu.cycle_num - previous_cycle_num);
         const num_bytes: i32 = @as(i32, @intCast(new_pc)) - @as(i32, @intCast(pc));
-        std.debug.print("\t Num Bytes: {d} Num Cycles: {d}\n\n", .{ num_bytes, num_cycles });
+        if (self.verbose) std.debug.print("\t Num Bytes: {d} Num Cycles: {d}\n\n", .{ num_bytes, num_cycles });
 
         return true;
     }

@@ -5,6 +5,7 @@ const game_emu = @import("game_emu.zig");
 const game_ram = @import("game_ram.zig");
 const game_io = @import("game_io.zig");
 const game_timer = @import("game_timer.zig");
+const game_ppu = @import("game_ppu.zig");
 
 // 0000 3FFF    16 KiB ROM bank 00      From cartridge, usually a fixed bank
 // 4000 7FFF    16 KiB ROM Bank 01–NN   From cartridge, switchable bank via mapper (if any)
@@ -25,6 +26,7 @@ pub const MemoryBus = struct {
     map_boot_rom: bool,
     ram: *game_ram.RAM,
     io: *game_io.IO,
+    ppu: *game_ppu.PPU,
 
     pub fn read(self: *MemoryBus, address: u16) !u8 {
         var cart = self.emu.cart.?.*;
@@ -38,20 +40,11 @@ pub const MemoryBus = struct {
 
         return switch (address) {
             0x0000...0x7FFF => try cart.read(address),
-            0x8000...0x9FFF => {
-                std.debug.print("[VRAM] - Unsupported bus read 0x{X:0>4}\n", .{address});
-                return 0; //game_errors.EmuErrors.NotImplementedError;
-            },
+            0x8000...0x9FFF => try self.ppu.vram_read(address),
             0xA000...0xBFFF => try cart.read(address),
             0xC000...0xDFFF => try self.ram.wram_read(address), //wram
-            0xE000...0xFDFF => {
-                // reserved echo ram
-                return 0;
-            },
-            0xFE00...0xFE9F => {
-                std.debug.print("[OAM] - Unsupported bus read 0x{X:0>4}\n", .{address});
-                return game_errors.EmuErrors.NotImplementedError;
-            },
+            0xE000...0xFDFF => try self.ram.wram_read(address - 0x2000),
+            0xFE00...0xFE9F => try self.ppu.oam_read(address),
             0xFEA0...0xFEFF => {
                 std.debug.print("[Prohibited] - Unsupported bus read 0x{X:0>4}\n", .{address});
                 return 0;
@@ -72,12 +65,12 @@ pub const MemoryBus = struct {
                 return;
             },
             0x8000...0x9FFF => {
-                std.debug.print("[VRAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
-                return; //game_errors.EmuErrors.NotImplementedError;
+                try self.ppu.vram_write(address, value);
+                return;
             },
             0xA000...0xBFFF => {
                 std.debug.print("[RAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
-                return game_errors.EmuErrors.NotImplementedError;
+                return; // game_errors.EmuErrors.NotImplementedError;
             },
             0xC000...0xDFFF => {
                 // WRAM
@@ -85,12 +78,12 @@ pub const MemoryBus = struct {
                 return;
             },
             0xE000...0xFDFF => {
-                // reserved echo ram
+                try self.ram.wram_write(address - 0x2000, value);
                 return;
             },
             0xFE00...0xFE9F => {
-                std.debug.print("[OAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
-                return game_errors.EmuErrors.NotImplementedError;
+                try self.ppu.oam_write(address, value);
+                return;
             },
             0xFEA0...0xFEFF => {
                 std.debug.print("[Prohibited] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
@@ -114,7 +107,7 @@ pub const MemoryBus = struct {
         }
     }
 
-    pub fn init(emu: *game_emu.Emu, timer: *game_timer.Timer) !*MemoryBus {
+    pub fn init(emu: *game_emu.Emu, timer: *game_timer.Timer, ppu: *game_ppu.PPU) !*MemoryBus {
         const allocator = game_allocator.GetAllocator();
         const bus = try allocator.create(MemoryBus);
 
@@ -123,6 +116,7 @@ pub const MemoryBus = struct {
         bus.map_boot_rom = false;
         bus.ram = try game_ram.RAM.init();
         bus.io = try game_io.IO.init(emu, timer);
+        bus.ppu = ppu;
 
         return bus;
     }

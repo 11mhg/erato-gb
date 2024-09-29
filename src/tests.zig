@@ -10,4 +10,5 @@ comptime {
     _ = @import("game_proc.zig");
     _ = @import("game_timer.zig");
     _ = @import("game_utils.zig");
+    _ = @import("test_sm83.zig");
 }

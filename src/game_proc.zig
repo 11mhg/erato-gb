@@ -115,7 +115,7 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
             const value: u16 = cpu.fetched_data;
             try cpu.write_reg(instruction.reg_1, value);
             cpu.emu.cycle(1);
-            std.debug.print("Register: {s} Value: {X:0>2}", .{ @tagName(instruction.reg_1), @as(u8, @truncate(value)) });
+            std.debug.print("Register: {s} Value: {X:0>2}\n", .{ @tagName(instruction.reg_1), @as(u8, @truncate(value)) });
             if (cpu.current_opcode == 0xF9) {
                 cpu.emu.cycle(1);
             }
@@ -184,17 +184,10 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
         game_instructions.AddressMode.PTR_R => {
             var addr: u16 = try cpu.read_reg(instruction.reg_1);
             if (cpu.current_opcode == 0xE2) {
-                // This is a LD [0xFF + C] A 
+                // This is a LD [0xFF + C] A
                 addr = 0xFF00 | addr;
             }
             cpu.emu.cycle(2);
-
-            if (cpu.current_opcode == 0xE2) {
-                const addr_inner: u16 = try cpu.read_reg(instruction.reg_1); 
-                const value_to_write: u8 = @truncate(cpu.fetched_data);
-
-                std.debug.print("0xE2 == 0xE2 - Address: {X:0>4} value: {X:0>2}\n", .{ addr_inner, value_to_write });
-            }
 
             if (try game_instructions.reg_is_u8(instruction.reg_2)) {
                 try write_u8(cpu, addr, @truncate(cpu.fetched_data));
@@ -703,7 +696,7 @@ fn proc_cb(cpu: *game_cpu.CPU) !void {
     switch (bit_op) {
         1 => {
             //bit 0x40...0x7F
-            const selected_bit: u1 = @truncate(value & (@as(u8, 1) << bit));
+            const selected_bit: u1 = @intFromBool((value & (@as(u8, 1) << bit)) != 0);
             cpu.flag_register.z = ~selected_bit;
             cpu.flag_register.n = 0;
             cpu.flag_register.h = 1;
@@ -838,8 +831,14 @@ fn proc_cb(cpu: *game_cpu.CPU) !void {
         },
         6 => {
             //SWAP
-            const result: u8 = @byteSwap(value);
-            //((value & 0xF0) >> 4) | ((value & 0x0F) << 4);
+            var old: u8 = @truncate(reg_value);
+            if (register == game_instructions.RegisterType.HL) {
+                const addr: u16 = reg_value;
+                old = try cpu.emu.memory_bus.?.read(addr);
+            }
+            const hi: u8 = (old & 0x0F) << 4;
+            const lo: u8 = (old & 0xF0) >> 4;
+            const result: u8 = hi | lo;
 
             if (register == game_instructions.RegisterType.HL) {
                 try cpu.emu.memory_bus.?.write(reg_value, result);
