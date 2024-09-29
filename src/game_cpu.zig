@@ -5,6 +5,7 @@ const game_emu = @import("game_emu.zig");
 const game_errors = @import("game_errors.zig");
 const game_proc = @import("game_proc.zig");
 const game_utils = @import("game_utils.zig");
+const ztracy = @import("ztracy");
 
 //16-bit        Hi      Lo      Name/Function
 //AF    A       -       Accumulator & Flags
@@ -110,14 +111,16 @@ pub const CPU = struct {
         cpu.prefixed_opcode_instruction_map = try game_instructions.GetPrefixedInstructionMap();
 
         // hard coded debug mode to enable and disable logs
-        cpu.debug_mode = true;
-        cpu.verbose = true;
+        cpu.debug_mode = false;
+        cpu.verbose = false;
 
         return cpu;
     }
 
     pub fn step(self: *CPU) !bool {
         // TESTS
+        const step_zone = ztracy.ZoneNC(@src(), "CPU Step", 0x00_FF_00_00);
+        defer step_zone.End();
         if (!self.halted and self.debug_mode and self.verbose) {
             const test_log: []const u8 = try std.fmt.allocPrint(
                 self.allocator,
@@ -193,7 +196,7 @@ pub const CPU = struct {
             try self.execute();
         } else {
             // Halted
-            self.emu.cycle(1);
+            try self.emu.cycle(1);
             if (self.int_flags != 0) {
                 self.halted = false;
             }
@@ -250,11 +253,15 @@ pub const CPU = struct {
     }
 
     fn execute(self: *CPU) !void {
+        const proc_zone = ztracy.ZoneNC(@src(), "proc", 0x00_FF_00_00);
+        defer proc_zone.End();
         try game_proc.proc(self, self.current_instruction.?);
         return;
     }
 
     fn fetch_instruction(self: *CPU) !void {
+        const fetch_instr_zone = ztracy.ZoneNC(@src(), "fetch_instruction", 0x00_FF_00_00);
+        defer fetch_instr_zone.End();
         self.current_opcode = try self.emu.memory_bus.?.*.read(self.registers.pc);
         self.registers.pc += 1;
 
@@ -325,6 +332,8 @@ pub const CPU = struct {
     }
 
     fn fetch_data(self: *CPU) !void {
+        const fetch_data_zone = ztracy.ZoneNC(@src(), "fetch_data", 0x00_FF_00_00);
+        defer fetch_data_zone.End();
         switch (self.current_instruction.?.mode) {
             game_instructions.AddressMode.IMP => {
                 return;
@@ -336,21 +345,21 @@ pub const CPU = struct {
             game_instructions.AddressMode.PTR => {
                 const address: u16 = try self.read_reg(self.current_instruction.?.reg_1);
                 self.fetched_data = try self.emu.memory_bus.?.read(address);
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
                 return;
             },
             game_instructions.AddressMode.R_N8, game_instructions.AddressMode.PTR_N8 => {
                 self.fetched_data = try self.emu.memory_bus.?.*.read(self.registers.pc);
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
                 self.registers.pc += 1;
                 return;
             },
             game_instructions.AddressMode.N16, game_instructions.AddressMode.R_N16 => {
                 const lo: u16 = try self.emu.memory_bus.?.*.read(self.registers.pc);
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
 
                 const hi: u16 = try self.emu.memory_bus.?.*.read(self.registers.pc + 1);
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
                 self.fetched_data = lo | (hi << 8);
                 self.registers.pc += 2;
                 return;
@@ -362,28 +371,27 @@ pub const CPU = struct {
             game_instructions.AddressMode.R_PTR => {
                 const addr: u16 = try self.read_reg(self.current_instruction.?.reg_2);
                 self.fetched_data = try self.emu.memory_bus.?.*.read(addr);
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
                 return;
             },
             game_instructions.AddressMode.N8 => {
                 const value: u8 = try self.emu.memory_bus.?.*.read(self.registers.pc);
                 self.fetched_data = value;
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
                 self.registers.pc += 1;
                 return;
             },
             game_instructions.AddressMode.A8_R => {
                 self.fetched_data = try self.read_reg(self.current_instruction.?.reg_2);
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
                 return;
             },
             game_instructions.AddressMode.R_A8 => {
                 const lo: u16 = try self.emu.memory_bus.?.*.read(self.registers.pc);
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
                 const addr: u16 = lo | 0xFF00;
-                std.debug.print("hi: FF lo: {X:0>2} = {X:0>2}\n", .{ lo, addr });
                 self.fetched_data = try self.emu.memory_bus.?.*.read(addr);
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
                 self.registers.pc += 1;
                 return;
             },
@@ -395,10 +403,10 @@ pub const CPU = struct {
                 const lo: u8 = try self.emu.memory_bus.?.*.read(self.registers.pc);
                 const hi: u8 = try self.emu.memory_bus.?.*.read(self.registers.pc + 1);
                 self.registers.pc += 2;
-                self.emu.cycle(2);
+                try self.emu.cycle(2);
                 const addr: u16 = @as(u16, lo) | (@as(u16, hi) << 8);
                 self.fetched_data = try self.emu.memory_bus.?.*.read(addr);
-                self.emu.cycle(1);
+                try self.emu.cycle(1);
                 return;
             },
             game_instructions.AddressMode.R_R => {

@@ -11,6 +11,7 @@
         .zglfw = .{ .path = "extern/zglfw" },
         .zopengl = .{ .path = "extern/zopengl" },
         .zpool = .{ .path = "extern/zpool" },
+        .ztracy = .{ .path = "extern/ztracy" },
     },
     .paths = .{
         "build.zig",

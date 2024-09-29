@@ -9,6 +9,7 @@ pub const IO = struct {
     serial_data: []u8,
     timer: *game_timer.Timer,
     emu: *game_emu.Emu,
+    ly: u8,
 
     pub fn init(emu: *game_emu.Emu, timer: *game_timer.Timer) !*IO {
         const allocator = game_allocator.GetAllocator();
@@ -18,6 +19,7 @@ pub const IO = struct {
         io.serial_data = try allocator.alloc(u8, 2);
         io.timer = timer;
         io.emu = emu;
+        io.ly = 0;
         @memset(io.serial_data, 0);
 
         return io;
@@ -41,6 +43,11 @@ pub const IO = struct {
             0xFF0F => {
                 return self.emu.cpu.?.int_flags;
             },
+            0xFF44 => {
+                const original_ly: u8 = self.ly;
+                self.ly += 1;
+                return original_ly;
+            },
             else => {
                 std.debug.print("[I/O] - Unsupported bus read 0x{X:0>4}\n", .{address});
                 return 0;
@@ -61,6 +68,9 @@ pub const IO = struct {
             },
             0xFF0F => {
                 self.emu.cpu.?.int_flags = value;
+            },
+            0xFF46 => {
+                self.emu.ppu.?.dma.start(value);
             },
             else => {
                 std.debug.print("[I/O] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });

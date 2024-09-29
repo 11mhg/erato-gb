@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const enable_tracy = b.option(bool, "tracy", "Tracy Profiler") orelse false;
 
     const exe = b.addExecutable(.{
         .name = "erato-gb",
@@ -12,6 +13,13 @@ pub fn build(b: *std.Build) void {
     });
 
     @import("system_sdk").addLibraryPathsTo(exe);
+
+    const ztracy = b.dependency("ztracy", .{
+        .enable_ztracy = enable_tracy,
+        .enable_fibers = enable_tracy,
+    });
+    exe.root_module.addImport("ztracy", ztracy.module("root"));
+    exe.linkLibrary(ztracy.artifact("tracy"));
 
     const zglfw = b.dependency("zglfw", .{ .target = target });
     exe.root_module.addImport("zglfw", zglfw.module("root"));

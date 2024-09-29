@@ -11,6 +11,7 @@ const game_boot_rom = @import("game_boot_rom.zig");
 const game_dbg = @import("game_dbg.zig");
 const game_timer = @import("game_timer.zig");
 const game_ppu = @import("game_ppu.zig");
+const ztracy = @import("ztracy");
 
 pub const Emu = struct {
     allocator: ?std.mem.Allocator,
@@ -58,12 +59,16 @@ pub const Emu = struct {
         return emu;
     }
 
-    pub fn cycle(self: *Emu, num_cycles: u32) void {
+    pub fn cycle(self: *Emu, num_cycles: u32) !void {
         //TODO: Update cycles to keep PPU in step with CPU.
         self.cycle_num += num_cycles;
-        for (0..(num_cycles * 4)) |_| {
-            self.ticks += 1;
-            self.timer.?.tick();
+        for (0..(num_cycles)) |_| {
+            for (0..4) |_| {
+                self.ticks += 1;
+                self.timer.?.tick();
+            }
+
+            try self.ppu.?.dma.tick();
         }
     }
 
@@ -80,7 +85,7 @@ pub const Emu = struct {
         const timer: *game_timer.Timer = try game_timer.Timer.init(self);
         self.timer = timer;
 
-        const ppu: *game_ppu.PPU = try game_ppu.PPU.init();
+        const ppu: *game_ppu.PPU = try game_ppu.PPU.init(self);
         self.ppu = ppu;
 
         const memory_bus: *game_bus.MemoryBus = try game_bus.MemoryBus.init(self, self.timer.?, self.ppu.?);
@@ -122,6 +127,8 @@ pub const Emu = struct {
 
     fn run_debug(self: *Emu) !void {
         while (true) {
+            const emu_zone = ztracy.ZoneNC(@src(), "Emulator main loop [debug]", 0x00_FF_00_00);
+            defer emu_zone.End();
             if (self.running and self.cartridge_loaded) {
                 const succeeded = try self.cpu.?.*.step();
                 if (!succeeded) {
@@ -134,6 +141,8 @@ pub const Emu = struct {
 
     fn run_(self: *Emu) !void {
         while (!self.ui.?.window.shouldClose()) {
+            const emu_zone = ztracy.ZoneNC(@src(), "Emulator main loop", 0x00_FF_00_00);
+            defer emu_zone.End();
             if (self.running and self.cartridge_loaded) {
                 const succeeded = try self.cpu.?.*.step();
                 if (!succeeded) {
@@ -144,6 +153,7 @@ pub const Emu = struct {
             self.ui.?.pre_render();
             try self.ui.?.render();
             self.ui.?.post_render();
+            ztracy.FrameMarkNamed("Main Frame [debug]");
         }
     }
 

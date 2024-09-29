@@ -49,9 +49,7 @@ pub const MemoryBus = struct {
                 std.debug.print("[Prohibited] - Unsupported bus read 0x{X:0>4}\n", .{address});
                 return 0;
             },
-            0xFF00...0xFF43 => try self.io.read(address),
-            0xFF44 => 0x00, //0x90,
-            0xFF45...0xFF7F => try self.io.read(address),
+            0xFF00...0xFF7F => try self.io.read(address),
             0xFF80...0xFFFE => self.ram.hram_read(address), //hram
             0xFFFF => self.emu.cpu.?.ie_register, //Interrupt Enable register (IE)
         };
