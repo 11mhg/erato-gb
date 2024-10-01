@@ -14,3 +14,10 @@ pub const tile_colors: [4]u32 = [4]u32{
     0xFF555555, // Less Grey
     0xFF000000, // Black
 };
+
+pub const tile_colors_enum = enum(u32) {
+    white = 0xFFFFFFFF,
+    grey = 0xFFAAAAAA,
+    dark_grey = 0xFF555555,
+    black = 0xFF000000,
+};

@@ -115,7 +115,6 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
             const value: u16 = cpu.fetched_data;
             try cpu.write_reg(instruction.reg_1, value);
             try cpu.emu.cycle(1);
-            std.debug.print("Register: {s} Value: {X:0>2}\n", .{ @tagName(instruction.reg_1), @as(u8, @truncate(value)) });
             if (cpu.current_opcode == 0xF9) {
                 try cpu.emu.cycle(1);
             }
@@ -138,8 +137,6 @@ fn proc_ld(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !void
                 } else {
                     value = @addWithOverflow(sp, @abs(e8))[0];
                 }
-
-                std.debug.print("SP: {X:0>4} e8: {d} = {X:0>4}\n", .{ sp, e8, value });
 
                 cpu.flag_register.z = 0;
                 cpu.flag_register.n = 0;
@@ -227,9 +224,6 @@ fn proc_ldh(cpu: *game_cpu.CPU, instruction: game_instructions.Instruction) !voi
         return;
     } else if (instruction.mode == game_instructions.AddressMode.R_A8) {
         const value: u16 = cpu.fetched_data;
-        const original_address_lo: u16 = try cpu.emu.memory_bus.?.read(cpu.registers.pc - 1);
-        const original_address: u16 = 0xFF00 | original_address_lo;
-        std.debug.print("address: {X:0>4} value: {X:0>4} register: {s}\n", .{ original_address, value, @tagName(instruction.reg_1) });
         try cpu.write_reg(instruction.reg_1, value);
         try cpu.emu.cycle(1);
         return;

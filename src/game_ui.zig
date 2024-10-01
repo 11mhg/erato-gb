@@ -26,6 +26,8 @@ pub const UI = struct {
     debug_screen: *debug_screen.DebugScreen,
     first_time: bool,
 
+    time_0: u64,
+
     pub fn init(emu: *game_emu.Emu) !*UI {
         const allocator = game_allocator.GetAllocator();
 
@@ -89,6 +91,7 @@ pub const UI = struct {
 
             ui.setup_imgui_theme();
         }
+        ui.time_0 = @intCast(std.time.milliTimestamp());
         // Done initializing gui stuff
 
         return ui;
@@ -201,6 +204,14 @@ pub const UI = struct {
         if (self.first_time) {
             self.first_time = false;
         }
+    }
+
+    pub fn delay(_: *UI, ms: u64) void {
+        std.time.sleep(ms * std.time.ns_per_ms);
+    }
+
+    pub fn get_ticks(self: *UI) u64 {
+        return @as(u64, @intCast(std.time.milliTimestamp())) - self.time_0;
     }
 
     pub fn destroy(self: *UI) void {

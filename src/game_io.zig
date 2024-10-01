@@ -43,10 +43,8 @@ pub const IO = struct {
             0xFF0F => {
                 return self.emu.cpu.?.int_flags;
             },
-            0xFF44 => {
-                const original_ly: u8 = self.ly;
-                self.ly += 1;
-                return original_ly;
+            0xFF40...0xFF4B => {
+                return self.emu.lcd.?.read(address);
             },
             else => {
                 std.debug.print("[I/O] - Unsupported bus read 0x{X:0>4}\n", .{address});
@@ -69,8 +67,8 @@ pub const IO = struct {
             0xFF0F => {
                 self.emu.cpu.?.int_flags = value;
             },
-            0xFF46 => {
-                self.emu.ppu.?.dma.start(value);
+            0xFF40...0xFF4B => {
+                return self.emu.lcd.?.write(address, value);
             },
             else => {
                 std.debug.print("[I/O] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });

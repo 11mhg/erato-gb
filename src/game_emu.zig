@@ -11,6 +11,7 @@ const game_boot_rom = @import("game_boot_rom.zig");
 const game_dbg = @import("game_dbg.zig");
 const game_timer = @import("game_timer.zig");
 const game_ppu = @import("game_ppu.zig");
+const game_lcd = @import("game_lcd.zig");
 const ztracy = @import("ztracy");
 
 pub const Emu = struct {
@@ -24,6 +25,7 @@ pub const Emu = struct {
     ui: ?*game_ui.UI,
     timer: ?*game_timer.Timer,
     ppu: ?*game_ppu.PPU,
+    lcd: ?*game_lcd.LCDScreen,
 
     cartridge_loaded: bool,
     running: bool,
@@ -56,6 +58,7 @@ pub const Emu = struct {
         emu.cartridge_loaded = false;
         emu.curr_error = undefined;
         emu.ppu = null;
+        emu.lcd = null;
         return emu;
     }
 
@@ -66,6 +69,7 @@ pub const Emu = struct {
             for (0..4) |_| {
                 self.ticks += 1;
                 self.timer.?.tick();
+                self.ppu.?.tick();
             }
 
             try self.ppu.?.dma.tick();
@@ -85,7 +89,10 @@ pub const Emu = struct {
         const timer: *game_timer.Timer = try game_timer.Timer.init(self);
         self.timer = timer;
 
-        const ppu: *game_ppu.PPU = try game_ppu.PPU.init(self);
+        const lcd: *game_lcd.LCDScreen = try game_lcd.LCDScreen.init(self);
+        self.lcd = lcd;
+
+        const ppu: *game_ppu.PPU = try game_ppu.PPU.init(self, lcd);
         self.ppu = ppu;
 
         const memory_bus: *game_bus.MemoryBus = try game_bus.MemoryBus.init(self, self.timer.?, self.ppu.?);
@@ -140,6 +147,7 @@ pub const Emu = struct {
     }
 
     fn run_(self: *Emu) !void {
+        var prev_frame: u64 = 0;
         while (!self.ui.?.window.shouldClose()) {
             const emu_zone = ztracy.ZoneNC(@src(), "Emulator main loop", 0x00_FF_00_00);
             defer emu_zone.End();
@@ -150,10 +158,14 @@ pub const Emu = struct {
                 }
                 self.debug_counter += 1;
             }
-            self.ui.?.pre_render();
-            try self.ui.?.render();
-            self.ui.?.post_render();
-            ztracy.FrameMarkNamed("Main Frame [debug]");
+            if (prev_frame != self.ppu.?.current_frame) {
+                self.ui.?.pre_render();
+                try self.ui.?.render();
+                self.ui.?.post_render();
+                ztracy.FrameMarkNamed("Main Frame [debug]");
+            }
+
+            prev_frame = self.ppu.?.current_frame;
         }
     }
 
@@ -174,6 +186,9 @@ pub const Emu = struct {
         }
         if (self.ppu) |ppu| {
             ppu.destroy();
+        }
+        if (self.lcd) |lcd| {
+            lcd.destroy();
         }
         if (self.cpu) |cpu| {
             cpu.destroy();

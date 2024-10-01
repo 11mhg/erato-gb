@@ -163,7 +163,7 @@ pub const CPU = struct {
             try self.fetch_instruction();
             try self.fetch_data();
             new_pc = self.registers.pc;
-            if (true or self.verbose) std.debug.print("{d} - {X:0>4}:  {s: >4} ({X:0>2} {X:0>2} {X:0>2}) SP: {X:0>4} A: {X:0>2} BC: {X:0>4} DE: {X:0>4} HL: {X:0>4} PC: {X:0>4} F: ({X:0>2}) {any}\n", .{
+            if (self.verbose) std.debug.print("{d} - {X:0>4}:  {s: >4} ({X:0>2} {X:0>2} {X:0>2}) SP: {X:0>4} A: {X:0>2} BC: {X:0>4} DE: {X:0>4} HL: {X:0>4} PC: {X:0>4} F: ({X:0>2}) {any}\n", .{
                 self.emu.debug_counter,
                 pc, // Program Counter we started with
                 @tagName(self.current_instruction.?.in_type),
