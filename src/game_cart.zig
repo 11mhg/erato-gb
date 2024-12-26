@@ -77,6 +77,17 @@ pub const Cart = struct {
         return cart;
     }
 
+    pub fn resize_cart(self: *Cart, new_size: u64) !void {
+        if (new_size <= self.data.len) {
+            std.debug.print("Cart size is larger or equal to size requested: current_size - {d} requested_size - {d}\n", .{ self.data.len, new_size });
+            return;
+        }
+        var new_data = try self.allocator.alloc(u8, new_size);
+        @memcpy(new_data[0..self.data.len], self.data);
+        self.allocator.free(self.data);
+        self.data = new_data;
+    }
+
     pub fn read_cart(self: *Cart, filepath: []const u8) !void {
         const cwd_path = try std.fs.cwd().realpathAlloc(self.allocator, ".");
         defer self.allocator.free(cwd_path);
@@ -91,11 +102,15 @@ pub const Cart = struct {
         defer file.close();
 
         const file_stat = try file.stat();
-        const data: []u8 = try file.readToEndAlloc(self.allocator, file_stat.size);
+        self.data = try self.allocator.alloc(u8, file_stat.size);
+        const numRead: u64 = try file.readAll(self.data);
 
-        const header: *Header = @constCast(@ptrCast(@alignCast(data.ptr + 0x100)));
+        if (numRead != file_stat.size) {
+            std.debug.print("file size changed between file open and file read? This should not be possible.", .{});
+            return game_errors.EmuErrors.UnexpectedBehavior;
+        }
 
-        self.data = data;
+        const header: *Header = @constCast(@ptrCast(@alignCast(self.data.ptr + 0x100)));
         self.header = header;
 
         std.log.info("Cartridge Loaded:", .{});

@@ -56,6 +56,9 @@ pub fn build(b: *std.Build) void {
 
     @import("system_sdk").addLibraryPathsTo(exe);
 
+    exe_unit_tests.root_module.addImport("ztracy", ztracy.module("root"));
+    exe_unit_tests.linkLibrary(ztracy.artifact("tracy"));
+
     exe_unit_tests.root_module.addImport("zglfw", zglfw.module("root"));
     exe_unit_tests.linkLibrary(zglfw.artifact("glfw"));
 

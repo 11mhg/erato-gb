@@ -165,14 +165,19 @@ pub const Emu = struct {
                 }
                 self.debug_counter += 1;
             }
-            if (prev_frame != self.ppu.?.current_frame) {
+
+            var render_ui = true;
+            if (self.ppu) | ppu | {
+                render_ui = prev_frame != ppu.current_frame;
+                prev_frame = self.ppu.?.current_frame;
+            }
+            
+            if (render_ui) {
                 self.ui.?.pre_render();
                 try self.ui.?.render();
                 self.ui.?.post_render();
                 ztracy.FrameMarkNamed("Main Frame [debug]");
             }
-
-            prev_frame = self.ppu.?.current_frame;
         }
     }
 
