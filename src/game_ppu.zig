@@ -162,7 +162,7 @@ pub const PPU = struct {
 
                 self.current_frame += 1;
 
-                const end = self.emu.ui.?.get_ticks();
+                const end = self.emu.get_time();
                 const frame_time = end - self.prev_frame_time;
 
                 if (frame_time < self.target_frame_time) {

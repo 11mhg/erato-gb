@@ -26,8 +26,6 @@ pub const UI = struct {
     debug_screen: *debug_screen.DebugScreen,
     first_time: bool,
 
-    time_0: u64,
-
     pub fn init(emu: *game_emu.Emu) !*UI {
         const allocator = game_allocator.GetAllocator();
 
@@ -91,7 +89,6 @@ pub const UI = struct {
 
             ui.setup_imgui_theme();
         }
-        ui.time_0 = @intCast(std.time.milliTimestamp());
         // Done initializing gui stuff
 
         return ui;
@@ -211,7 +208,7 @@ pub const UI = struct {
     }
 
     pub fn get_ticks(self: *UI) u64 {
-        return @as(u64, @intCast(std.time.milliTimestamp())) - self.time_0;
+        return self.emu.get_time();
     }
 
     pub fn destroy(self: *UI) void {

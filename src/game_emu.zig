@@ -36,6 +36,8 @@ pub const Emu = struct {
 
     cycle_num: u32,
 
+    time_0: u64,
+
     pub fn init() !*Emu {
         const allocator = game_allocator.GetAllocator();
         var emu: *Emu = try allocator.create(Emu);
@@ -59,6 +61,7 @@ pub const Emu = struct {
         emu.curr_error = undefined;
         emu.ppu = null;
         emu.lcd = null;
+        emu.time_0 = @intCast(std.time.milliTimestamp());
         return emu;
     }
 
@@ -130,6 +133,10 @@ pub const Emu = struct {
         } else {
             try emu.run_();
         }
+    }
+
+    pub fn get_time(self: *Emu) u64 {
+        return @as(u64, @intCast(std.time.milliTimestamp())) - self.time_0;
     }
 
     fn run_debug(self: *Emu) !void {
