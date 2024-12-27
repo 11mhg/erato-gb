@@ -5,4 +5,5 @@ pub const EmuErrors = error{
     InvalidChecksumError,
     ProcNotImplemented,
     UnexpectedBehavior,
+    PixelFifoEmptyError,
 };

@@ -45,7 +45,6 @@ pub const RAM = struct {
     }
 
     pub fn hram_write(self: *RAM, address: u16, value: u8) !void {
-        std.debug.print("[HRAM] Write - 0x{X:0>4} - 0x{X:0>2}\n", .{ address, value });
         const new_addr = address - 0xFF80;
         self.hram[new_addr] = value;
         return;

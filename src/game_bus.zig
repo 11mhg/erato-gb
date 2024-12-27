@@ -6,6 +6,7 @@ const game_ram = @import("game_ram.zig");
 const game_io = @import("game_io.zig");
 const game_timer = @import("game_timer.zig");
 const game_ppu = @import("game_ppu.zig");
+const game_utils = @import("game_utils.zig");
 
 // 0000 3FFF    16 KiB ROM bank 00      From cartridge, usually a fixed bank
 // 4000 7FFF    16 KiB ROM Bank 01–NN   From cartridge, switchable bank via mapper (if any)
@@ -46,7 +47,7 @@ pub const MemoryBus = struct {
             0xE000...0xFDFF => try self.ram.wram_read(address - 0x2000),
             0xFE00...0xFE9F => try self.ppu.oam_read(address),
             0xFEA0...0xFEFF => {
-                std.debug.print("[Prohibited] - Unsupported bus read 0x{X:0>4}\n", .{address});
+                //std.debug.print("[Prohibited] - Unsupported bus read 0x{X:0>4}\n", .{address});
                 return 0;
             },
             0xFF00...0xFF7F => try self.io.read(address),
@@ -67,7 +68,7 @@ pub const MemoryBus = struct {
                 return;
             },
             0xA000...0xBFFF => {
-                std.debug.print("[RAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
+                //std.debug.print("[RAM] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
                 return; // game_errors.EmuErrors.NotImplementedError;
             },
             0xC000...0xDFFF => {
@@ -84,7 +85,7 @@ pub const MemoryBus = struct {
                 return;
             },
             0xFEA0...0xFEFF => {
-                std.debug.print("[Prohibited] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
+                //std.debug.print("[Prohibited] - Unsupported bus write 0x{X:0>4} (0x{X:0>2})\n", .{ address, value });
                 return;
             },
             0xFF00...0xFF7F => {

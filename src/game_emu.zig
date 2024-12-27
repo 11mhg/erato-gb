@@ -71,11 +71,18 @@ pub const Emu = struct {
         for (0..(num_cycles)) |_| {
             for (0..4) |_| {
                 self.ticks += 1;
-                self.timer.?.tick();
-                self.ppu.?.tick();
+
+                if (self.timer) |timer| {
+                    timer.tick();
+                }
+                if (self.ppu) |ppu| {
+                    try ppu.tick();
+                }
             }
 
-            try self.ppu.?.dma.tick();
+            if (self.ppu) |ppu| {
+                try ppu.dma.tick();
+            }
         }
     }
 
@@ -110,6 +117,8 @@ pub const Emu = struct {
         try game_boot_rom.InitializeRegisters(self.cpu.?, self.cart.?, self.boot_rom_name);
 
         self.memory_bus.?.*.map_boot_rom = false;
+
+        self.ui.?.lcd_screen.enable();
 
         self.running = true;
         self.paused = false;
@@ -167,11 +176,11 @@ pub const Emu = struct {
             }
 
             var render_ui = true;
-            if (self.ppu) | ppu | {
+            if (self.ppu) |ppu| {
                 render_ui = prev_frame != ppu.current_frame;
                 prev_frame = self.ppu.?.current_frame;
             }
-            
+
             if (render_ui) {
                 self.ui.?.pre_render();
                 try self.ui.?.render();

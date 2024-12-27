@@ -9,7 +9,6 @@ pub const IO = struct {
     serial_data: []u8,
     timer: *game_timer.Timer,
     emu: *game_emu.Emu,
-    ly: u8,
 
     pub fn init(emu: *game_emu.Emu, timer: *game_timer.Timer) !*IO {
         const allocator = game_allocator.GetAllocator();
@@ -19,7 +18,6 @@ pub const IO = struct {
         io.serial_data = try allocator.alloc(u8, 2);
         io.timer = timer;
         io.emu = emu;
-        io.ly = 0;
         @memset(io.serial_data, 0);
 
         return io;

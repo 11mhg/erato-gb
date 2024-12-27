@@ -76,17 +76,18 @@ pub const LCDScreen = struct {
     }
 
     pub fn bgw_enable(self: *LCDScreen) bool {
-        const lcdc: LCDC = @ptrCast(&self.lcd_data.lcdc);
+        const lcdc: *LCDC = @ptrCast(&self.lcd_data.lcdc);
         return lcdc.bgw_enable != 0;
     }
 
     pub fn obj_enable(self: *LCDScreen) bool {
-        const lcdc: LCDC = @ptrCast(&self.lcd_data.lcdc);
+        const lcdc: *LCDC = @ptrCast(&self.lcd_data.lcdc);
         return lcdc.obj_enable != 0;
     }
 
+    // Also known as obj_height
     pub fn obj_size(self: *LCDScreen) u8 {
-        const lcdc: LCDC = @ptrCast(&self.lcd_data.lcdc);
+        const lcdc: *LCDC = @ptrCast(&self.lcd_data.lcdc);
         if (lcdc.obj_size != 0) {
             return 16;
         } else {
@@ -94,8 +95,9 @@ pub const LCDScreen = struct {
         }
     }
 
+    // Also known as BG_MAP_AREA
     pub fn bg_tilemap(self: *LCDScreen) u16 {
-        const lcdc: LCDC = @ptrCast(&self.lcd_data.lcdc);
+        const lcdc: *LCDC = @ptrCast(&self.lcd_data.lcdc);
         if (lcdc.bg_tilemap == 0) {
             return 0x9800;
         } else {
@@ -103,8 +105,9 @@ pub const LCDScreen = struct {
         }
     }
 
+    // Also known as BGW_DATA_AREA
     pub fn bg_window_tiles(self: *LCDScreen) u16 {
-        const lcdc: LCDC = @ptrCast(&self.lcd_data.lcdc);
+        const lcdc: *LCDC = @ptrCast(&self.lcd_data.lcdc);
         if (lcdc.bg_window_tiles == 0) {
             return 0x8800;
         } else {
@@ -113,12 +116,13 @@ pub const LCDScreen = struct {
     }
 
     pub fn window_enable(self: *LCDScreen) bool {
-        const lcdc: LCDC = @ptrCast(&self.lcd_data.lcdc);
+        const lcdc: *LCDC = @ptrCast(&self.lcd_data.lcdc);
         return lcdc.window_enable != 0;
     }
 
+    // Also known as WIN_MAP_AREA
     pub fn window_tilemap(self: *LCDScreen) u16 {
-        const lcdc: LCDC = @ptrCast(&self.lcd_data.lcdc);
+        const lcdc: *LCDC = @ptrCast(&self.lcd_data.lcdc);
         if (lcdc.window_tilemap == 0) {
             return 0x9800;
         } else {
@@ -127,7 +131,7 @@ pub const LCDScreen = struct {
     }
 
     pub fn lcd_ppu_enable(self: *LCDScreen) bool {
-        const lcdc: LCDC = @ptrCast(&self.lcd_data.lcdc);
+        const lcdc: *LCDC = @ptrCast(&self.lcd_data.lcdc);
         return lcdc.lcd_ppu_enable != 0;
     }
 
