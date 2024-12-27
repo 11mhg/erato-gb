@@ -12,9 +12,9 @@ const YRES: usize = 144;
 const XRES: usize = 160;
 
 const OAM_Attribute_Flag = packed struct(u8) {
-    cgb_palette: u3,
-    bank: u1,
-    dmg_palette: u1,
+    cgb_palette: u3, //cgb_pn
+    bank: u1, //cgb_vram_bank
+    dmg_palette: u1, //pn
     x_flip: u1,
     y_flip: u1,
     priority: u1,
@@ -35,6 +35,12 @@ pub const PPU = struct {
     lcd: *game_lcd.LCDScreen,
     dma: *DMA,
     pixel_fifo_manager: *PixelFifoManager,
+
+    line_sprite_count: u8,
+    line_sprites: std.ArrayList(OAM_Entry),
+
+    fetched_oam_entry_count: u8,
+    fetched_oam_entries: [3]OAM_Entry,
 
     target_frame_time: u64,
     prev_frame_time: u64,
@@ -75,6 +81,11 @@ pub const PPU = struct {
 
         ppu.pixel_fifo_manager = try PixelFifoManager.init();
 
+        ppu.line_sprite_count = 0;
+        ppu.fetched_oam_entry_count = 0;
+
+        ppu.line_sprites = std.ArrayList(OAM_Entry).init(ppu.allocator);
+
         return ppu;
     }
 
@@ -82,7 +93,7 @@ pub const PPU = struct {
         self.line_ticks += 1;
 
         switch (self.lcd.lcds_mode()) {
-            game_lcd.LCD_MODE.MODE_OAM => self.mode_oam(),
+            game_lcd.LCD_MODE.MODE_OAM => try self.mode_oam(),
             game_lcd.LCD_MODE.MODE_XFER => try self.mode_xfer(),
             game_lcd.LCD_MODE.MODE_HBLANK => self.mode_hblank(),
             game_lcd.LCD_MODE.MODE_VBLANK => self.mode_vblank(),
@@ -132,7 +143,56 @@ pub const PPU = struct {
         return;
     }
 
-    pub fn mode_oam(self: *PPU) void {
+    fn load_line_sprites(self: *PPU) !void {
+        const cur_y: u8 = self.lcd.lcd_data.ly;
+        const sprite_height: u8 = self.lcd.obj_size();
+
+        self.line_sprites.shrinkAndFree(0);
+
+        var i: usize = 0;
+        while (i < 40) : (i += 1) {
+            const e: *OAM_Entry = &(self.oam[i]);
+
+            if (e.x == 0) {
+                // x = 0 means not visible
+                continue;
+            }
+
+            if (self.line_sprite_count >= 10) {
+                // too many sprites! We're done
+                break;
+            }
+
+            if ((e.y <= (cur_y + 16)) and ((e.y + sprite_height) > (cur_y + 16))) {
+                // This current line
+                if (self.line_sprites.items.len == 0) {
+                    const entry: *OAM_Entry = try self.line_sprites.addOne();
+                    entry.* = e.*;
+
+                    self.line_sprite_count += 1;
+                }
+
+                var entry_to_check: u8 = 0;
+                while (entry_to_check < self.line_sprites.items.len) : (entry_to_check += 1) {
+                    const previous_entry: *OAM_Entry = &self.line_sprites.items[entry_to_check];
+                    if (e.x > previous_entry.x) {
+                        // Insert ourselves
+                        try self.line_sprites.insert(entry_to_check, e.*);
+                        self.line_sprite_count += 1;
+                        break;
+                    } else if (entry_to_check + 1 == self.line_sprites.items.len) {
+                        const entry: *OAM_Entry = try self.line_sprites.addOne();
+                        entry.* = e.*;
+                        self.line_sprite_count += 1;
+                        break;
+                    }
+                }
+                // self.line_sprites should be ordered in descending X order i.e. [ .x = 5, .x = 3, .x = 1 ]
+            }
+        }
+    }
+
+    pub fn mode_oam(self: *PPU) !void {
         if (self.line_ticks >= 80) {
             self.lcd.lcds_mode_set(game_lcd.LCD_MODE.MODE_XFER);
 
@@ -141,6 +201,13 @@ pub const PPU = struct {
             self.pixel_fifo_manager.fetch_x = 0;
             self.pixel_fifo_manager.pushed_x = 0;
             self.pixel_fifo_manager.fifo_x = 0;
+        }
+
+        if (self.line_ticks == 1) {
+            // read oam on the first tick only
+            self.line_sprite_count = 0;
+
+            try self.load_line_sprites();
         }
     }
     pub fn mode_xfer(self: *PPU) !void {
@@ -255,10 +322,18 @@ pub const PPU = struct {
             const bit_shift: u3 = @intCast(bit);
             const res_b1: u8 = @intFromBool(!!((self.pixel_fifo_manager.bgw_fetch_data[1] & (@as(u8, 1) << bit_shift)) != 0));
             const res_b2: u8 = @intFromBool(!!((self.pixel_fifo_manager.bgw_fetch_data[2] & (@as(u8, 1) << bit_shift)) != 0));
-            const hi: u8 = res_b1 << 1;
-            const lo: u8 = res_b2;
+            const hi: u8 = res_b1;
+            const lo: u8 = res_b2 << 1;
 
-            const color: u32 = self.lcd.lcd_data.bg_colors[hi | lo];
+            var color: u32 = self.lcd.lcd_data.bg_colors[hi | lo];
+
+            if (!self.lcd.bgw_enable()) {
+                color = self.lcd.lcd_data.bg_colors[0];
+            }
+
+            if (self.lcd.obj_enable()) {
+                color = self.fetch_sprite_pixels(bit, color, hi | lo);
+            }
 
             if (x >= 0) {
                 try self.pixel_fifo_push(color);
@@ -268,15 +343,85 @@ pub const PPU = struct {
         return true;
     }
 
+    fn fetch_sprite_pixels(self: *PPU, _: i32, color: u32, bg_color: u8) u32 {
+        var return_color: u32 = color;
+        for (0..self.fetched_oam_entry_count) |i| {
+            const sp_x: i32 = (@as(i32, @intCast(self.fetched_oam_entries[i].x)) - 8) +
+                (@as(i32, @intCast(self.lcd.lcd_data.scroll_x % 8)));
+            if (sp_x + 8 < self.pixel_fifo_manager.fifo_x) {
+                // Passed this pixel point...
+                continue;
+            }
+
+            const offset: i32 = @as(i32, @intCast(self.pixel_fifo_manager.fifo_x)) - sp_x;
+
+            if ((offset < 0) or (offset > 7)) {
+                // out of bounds
+                continue;
+            }
+
+            var bit_shift: u3 = @intCast(7 - offset);
+            if (self.fetched_oam_entries[i].flags.x_flip != 0) {
+                bit_shift = @intCast(offset);
+            }
+
+            const res_b1: u8 = @intFromBool(!!((self.pixel_fifo_manager.fetch_entry_data[i * 2] & (@as(u8, 1) << bit_shift)) != 0));
+            const res_b2: u8 = @intFromBool(!!((self.pixel_fifo_manager.fetch_entry_data[(i * 2) + 1] & (@as(u8, 1) << bit_shift)) != 0));
+            const new_hi: u8 = res_b1;
+            const new_lo: u8 = res_b2 << 1;
+
+            const bg_priority: bool = self.fetched_oam_entries[i].flags.priority != 0;
+
+            if ((new_hi | new_lo) == 0) {
+                continue;
+            }
+
+            if (!bg_priority or bg_color == 0) {
+                return_color = if (self.fetched_oam_entries[i].flags.dmg_palette != 0) self.lcd.lcd_data.sp2_colors[new_hi | new_lo] else self.lcd.lcd_data.sp1_colors[new_hi | new_lo];
+
+                if ((new_hi | new_lo) != 0) {
+                    break;
+                }
+            }
+        }
+        return return_color;
+    }
+
     fn pipeline_fifo_reset(self: *PPU) !void {
         while (self.pixel_fifo_manager.get_fifo_size() > 0) {
             _ = try self.pixel_fifo_pop();
         }
     }
 
+    fn pipeline_load_sprite_tile(self: *PPU) void {
+        var entry_index: usize = self.line_sprites.items.len - 1;
+
+        while (entry_index < self.line_sprites.items.len) : (entry_index = @subWithOverflow(entry_index, 1)[0]) {
+            const current_entry: OAM_Entry = self.line_sprites.items[entry_index];
+            const sp_x: i32 = (@as(i32, @intCast(current_entry.x)) - 8) +
+                (@as(i32, @intCast(self.lcd.lcd_data.scroll_x % 8)));
+
+            const fetch_x_i32: i32 = cast(u8, i32, self.pixel_fifo_manager.fetch_x);
+            if (((sp_x >= fetch_x_i32) and (sp_x < (fetch_x_i32 + 8))) or
+                (((sp_x + 8) >= fetch_x_i32) and ((sp_x + 8) <= (fetch_x_i32 + 8))))
+            {
+                // A valid sprite needed to be fetched
+                self.fetched_oam_entries[self.fetched_oam_entry_count] = current_entry;
+                self.fetched_oam_entry_count += 1;
+            }
+
+            if (self.fetched_oam_entry_count >= 3) {
+                // leave after loading three entries
+                break;
+            }
+        }
+    }
+
     fn pipeline_fetch_pixel(self: *PPU) !void {
         switch (self.pixel_fifo_manager.cur_fetch_state) {
             FETCH_STATE.FS_TILE => {
+                self.fetched_oam_entry_count = 0;
+
                 if (self.lcd.bgw_enable()) {
                     const addr: u16 = self.lcd.bg_tilemap() +
                         (cast(u8, u16, self.pixel_fifo_manager.map_x) / 8) +
@@ -290,6 +435,10 @@ pub const PPU = struct {
                     }
                 }
 
+                if (self.lcd.obj_enable() and (self.line_sprites.items.len > 0)) {
+                    self.pipeline_load_sprite_tile();
+                }
+
                 self.pixel_fifo_manager.cur_fetch_state = FETCH_STATE.FS_DATA0;
                 self.pixel_fifo_manager.fetch_x += 8;
             },
@@ -300,6 +449,8 @@ pub const PPU = struct {
                 const data: u8 = try self.emu.memory_bus.?.read(addr);
                 self.pixel_fifo_manager.bgw_fetch_data[1] = data;
 
+                try self.pipeline_load_sprite_data(0);
+
                 self.pixel_fifo_manager.cur_fetch_state = FETCH_STATE.FS_DATA1;
             },
             FETCH_STATE.FS_DATA1 => {
@@ -308,6 +459,8 @@ pub const PPU = struct {
                     (cast(u8, u16, self.pixel_fifo_manager.tile_y) + 1);
                 const data: u8 = try self.emu.memory_bus.?.read(addr);
                 self.pixel_fifo_manager.bgw_fetch_data[2] = data;
+
+                try self.pipeline_load_sprite_data(1);
 
                 self.pixel_fifo_manager.cur_fetch_state = FETCH_STATE.FS_IDLE;
             },
@@ -319,6 +472,28 @@ pub const PPU = struct {
                     self.pixel_fifo_manager.cur_fetch_state = FETCH_STATE.FS_TILE;
                 }
             },
+        }
+    }
+
+    fn pipeline_load_sprite_data(self: *PPU, offset: u1) !void {
+        const cur_y: u8 = self.lcd.lcd_data.ly;
+        const sprite_height: u8 = self.lcd.obj_size();
+
+        for (0..self.fetched_oam_entry_count) |i| {
+            var ty: u16 = ((cast(u8, u16, cur_y) + 16) - cast(u8, u16, self.fetched_oam_entries[i].y)) * 2;
+
+            if (self.fetched_oam_entries[i].flags.y_flip != 0) {
+                ty = ((cast(u8, u16, sprite_height) * 2) - 2) - ty;
+            }
+
+            var tile_index: u16 = @intCast(self.fetched_oam_entries[i].tile);
+
+            if (sprite_height == 16) {
+                tile_index &= ~@as(u16, @intCast(1));
+            }
+
+            const addr: u16 = 0x8000 + (tile_index * 16) + ty + cast(u1, u16, offset);
+            self.pixel_fifo_manager.fetch_entry_data[(i * 2) + cast(u1, usize, offset)] = try self.emu.memory_bus.?.read(addr);
         }
     }
 
